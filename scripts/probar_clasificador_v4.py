@@ -18,6 +18,8 @@ casos = [
  ("simulación", caso("Curso simulación clínica", "Curso simulación clínica", "Capacitación clínica"), "A"),
  ("informática", caso("Diplomado informática clínica", "Diplomado informática clínica", "Programa formativo"), "A"),
  ("intercultural", caso("Formación intercultural en salud indígena", "Capacitación salud indígena", "Programa formativo"), "A"),
+ ("arsenalería quirúrgica (caso real)", caso("JCB. Curso arsenalería quirúrgica", "Capacitación a empleados", "Especificaciones técnicas en documento adjunto"), "A"),
+ ("postvención del suicidio (caso real)", caso("RELATOR PARA CAPACITACIÓN POSTVENCION DEL SUICIDIO EN LA RED ASISTENCIAL", "Capacitación a empleados", "Curso teórico-práctico dirigido a profesionales de la red asistencial"), "A"),
 ]
 for nombre, item, esperado in casos:
     obtenido = classify(item)["decision"]
