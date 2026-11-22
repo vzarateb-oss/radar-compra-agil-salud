@@ -8,6 +8,7 @@ on:
     paths:
       - 'scripts/actualizar_radar_v4.py'
       - 'scripts/probar_clasificador_v4.py'
+      - 'scripts/reclasificar_radar_v4.py'
       - '.github/workflows/radar-v4-pruebas.yml'
   workflow_dispatch:
 
@@ -28,6 +29,6 @@ jobs:
       - name: Instalar requests
         run: python -m pip install 'requests>=2.31,<3'
       - name: Comprobar sintaxis
-        run: python -m compileall -q scripts/actualizar_radar_v4.py scripts/probar_clasificador_v4.py
+        run: python -m compileall -q scripts/actualizar_radar_v4.py scripts/probar_clasificador_v4.py scripts/reclasificar_radar_v4.py
       - name: Pruebas de regresion sin API
         run: python scripts/probar_clasificador_v4.py
