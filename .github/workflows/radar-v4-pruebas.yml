@@ -1,0 +1,37 @@
+name: Radar V4 - pruebas sin API
+
+on:
+  push:
+    branches:
+      - desarrollo/radar-v4
+  pull_request:
+    paths:
+      - 'scripts/actualizar_radar_v4.py'
+      - 'scripts/probar_clasificador_v4.py'
+      - 'scripts/reclasificar_radar_v4.py'
+      - 'scripts/probar_integracion_v4.py'
+      - '.github/workflows/radar-v4-pruebas.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pruebas:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Descargar codigo
+        uses: actions/checkout@v4
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar requests
+        run: python -m pip install 'requests>=2.31,<3'
+      - name: Comprobar sintaxis
+        run: python -m compileall -q scripts/actualizar_radar_v4.py scripts/probar_clasificador_v4.py scripts/reclasificar_radar_v4.py scripts/probar_integracion_v4.py
+      - name: Pruebas de regresion sin API
+        run: python scripts/probar_clasificador_v4.py
+      - name: Pruebas integradas sin API
+        run: python scripts/probar_integracion_v4.py
