@@ -70,3 +70,22 @@ with patch("actualizar_radar_v4.time.sleep", return_value=None):
     assert session.calls == 1, "Un error 401 no debe reintentarse"
 
 print("OK: reintentos HTTP 504 y corte ante HTTP 401, sin red")
+
+# Replay de detalles guardados: verifica que la reclasificación no use red.
+import json
+import tempfile
+from pathlib import Path
+from reclasificar_radar_v4 import replay
+
+with tempfile.TemporaryDirectory() as carpeta:
+    origen = Path(carpeta) / "detalles.jsonl"
+    destino = Path(carpeta) / "resultado.csv"
+    with origen.open("w", encoding="utf-8") as salida:
+        for numero, (_, item, _) in enumerate(casos):
+            salida.write(json.dumps({"codigo": str(numero), "detalle": item}, ensure_ascii=False) + "\\n")
+    filas = replay(origen, destino)
+    assert len(filas) == len(casos)
+    assert destino.is_file()
+    assert filas[0]["Decision"] == "EXCLUIDA"
+    assert filas[5]["Decision"] == "A"
+print("OK: replay sin API de detalles guardados")
