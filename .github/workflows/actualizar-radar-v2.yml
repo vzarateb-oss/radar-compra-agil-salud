@@ -1,0 +1,42 @@
+
+name: Radar - piloto V2 auditoria sanitaria
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  piloto-v2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: python -m pip install "requests>=2.31,<3"
+
+      - name: Ejecutar Radar V2
+        env:
+          MERCADOPUBLICO_TICKET: ${{ secrets.MERCADOPUBLICO_TICKET }}
+        run: python scripts/actualizar_radar_v2.py
+
+      - name: Guardar resultados V2
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: radar-v2-resultados
+          path: |
+            staging_radar_v2/clasificacion_v2.csv
+            staging_radar_v2/auditoria_v2.csv
+            staging_radar_v2/reporte_v2.json
+          if-no-files-found: warn
+          retention-days: 14
