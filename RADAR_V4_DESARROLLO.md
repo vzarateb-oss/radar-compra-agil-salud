@@ -20,6 +20,7 @@ sigue usando los CSV originales de la raíz de `main`.
 ```bash
 python -m pip install "requests>=2.31,<3"
 python scripts/probar_clasificador_v4.py
+python scripts/probar_integracion_v4.py
 ```
 
 ## Reclasificar capturas previas (sin API)
