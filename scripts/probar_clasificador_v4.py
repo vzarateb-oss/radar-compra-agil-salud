@@ -18,6 +18,7 @@ casos = [
  ("simulación", caso("Curso simulación clínica", "Curso simulación clínica", "Capacitación clínica"), "A"),
  ("informática", caso("Diplomado informática clínica", "Diplomado informática clínica", "Programa formativo"), "A"),
  ("intercultural", caso("Formación intercultural en salud indígena", "Capacitación salud indígena", "Programa formativo"), "A"),
+ ("RSH autocuidado no sanitario (caso real)", caso("ADQUISICIÓN JORNADA DE CAPACITACIÓN, PROGRAMA RSH", "Capacitación a empleados", "Autocuidado personal y grupal e introducción a lengua de señas para Registro Social de Hogares"), "EXCLUIDA"),
  ("arsenalería quirúrgica (caso real)", caso("JCB. Curso arsenalería quirúrgica", "Capacitación a empleados", "Especificaciones técnicas en documento adjunto"), "A"),
  ("postvención del suicidio (caso real)", caso("RELATOR PARA CAPACITACIÓN POSTVENCION DEL SUICIDIO EN LA RED ASISTENCIAL", "Capacitación a empleados", "Curso teórico-práctico dirigido a profesionales de la red asistencial"), "A"),
 ]
@@ -30,6 +31,8 @@ online = classify(casos[8][1])["mode"].lower()
 assert "asincronía no confirmada" in online, online
 autogestion = classify(caso("Capacitaciones programa Más AMA", "Servicio de capacitación en estimulación cognitiva", "Curso online y autogestionado para profesionales de salud"))["mode"].lower()
 assert "autogestionada" in autogestion and "no confirmada" in autogestion, autogestion
+mas_ama_online = classify(caso("Capacitación programa Más AMA", "Programas o cursos no diplomados a distancia", "Capacitaciones on line y autogestionado de estimulación cognitiva y estilos de vida saludables"))["mode"].lower()
+assert "online autogestionada" in mas_ama_online, mas_ama_online
 print(f"OK: {len(casos)} clasificaciones y 3 modalidades sin API")
 
 # Simulaciones de red: no realizan llamadas a Mercado Público.
