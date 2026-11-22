@@ -1,0 +1,43 @@
+
+name: Radar - piloto V3 clasificacion sanitaria
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  piloto-v3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: python -m pip install "requests>=2.31,<3"
+
+      - name: Probar clasificador V3
+        run: python scripts/probar_clasificador_v3.py
+
+      - name: Ejecutar ingesta V3
+        env:
+          MERCADOPUBLICO_TICKET: ${{ secrets.MERCADOPUBLICO_TICKET }}
+        run: python scripts/actualizar_radar_v3.py
+
+      - name: Guardar resultados V3
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: radar-v3-resultados
+          path: |
+            staging_radar_v3/
+          if-no-files-found: warn
+          retention-days: 14
