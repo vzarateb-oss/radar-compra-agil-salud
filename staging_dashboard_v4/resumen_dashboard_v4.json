@@ -1,0 +1,12 @@
+{
+  "registros_evaluados": 105,
+  "sanitarias_A": 10,
+  "revision_C": 1,
+  "excluidas": 94,
+  "pendientes": 0,
+  "asincronicas_confirmadas": 1,
+  "online_o_autogestionadas_pendientes": 2,
+  "origen": "cache API piloto 45021559147",
+  "alcance": "dos paginas por termino; muestra no exhaustiva",
+  "estado": "STAGING; no apto para publicacion sin validacion humana"
+}
