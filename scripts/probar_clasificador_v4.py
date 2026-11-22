@@ -82,7 +82,7 @@ with tempfile.TemporaryDirectory() as carpeta:
     destino = Path(carpeta) / "resultado.csv"
     with origen.open("w", encoding="utf-8") as salida:
         for numero, (_, item, _) in enumerate(casos):
-            salida.write(json.dumps({"codigo": str(numero), "detalle": item}, ensure_ascii=False) + "\\n")
+            salida.write(json.dumps({"codigo": str(numero), "detalle": item}, ensure_ascii=False) + "\n")
     filas = replay(origen, destino)
     assert len(filas) == len(casos)
     assert destino.is_file()
