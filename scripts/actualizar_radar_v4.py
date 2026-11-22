@@ -26,7 +26,7 @@ NO_FORMATIVO = ('coffee break','coffe break','colaciones','colacion','catering',
 PRODUCTOS_NO_FORMATIVOS = ('suministro de alimentos','galletas','cafe instantaneo','te instantaneo','vasos de servicio','jugos y nectares','mantelillos','bandejas o fuentes')
 ASINCRONIA = ('asincronic','autoinstruccional','auto instruccional','a su ritmo','on demand','bajo demanda')
 AUTOGESTION = ('autogestionad', 'auto gestionad', 'autoguiad', 'autoaprendizaje')
-ONLINE = ('online','en linea','virtual','e-learning','elearning','a distancia','remoto','plataforma virtual')
+ONLINE = ('online','on line','en linea','virtual','e-learning','elearning','a distancia','remoto','plataforma virtual')
 PRESENCIAL = ('presencial','en terreno','en aula')
 CAMPOS = ['Codigo','Nombre oportunidad','Organismo comprador','RUT organismo comprador','Region','Estado','Fecha publicacion','Fecha cierre','Presupuesto CLP','Ofertas recibidas','Pertinencia sanitaria','Modalidad','Justificacion','Evidencia formativa','Evidencia sanitaria','Evidencia modalidad','Descripcion','Productos solicitados','Revisar adjuntos','Fecha extraccion UTC']
 AUDIT = ['Codigo','Nombre oportunidad','Decision','Motivo','Evidencia formativa','Evidencia sanitaria','Evidencia exclusion','Modalidad','Evidencia modalidad','Productos solicitados','Descripcion','Detalle consultado','Objeto de compra','Evidencia objeto']
@@ -127,7 +127,9 @@ def classify(d):
         decision, reason, obj = 'EXCLUIDA', 'Mención formativa insuficiente para acreditar el objeto', 'Sin formación acreditada'
     else:
         obj = 'Servicio formativo'
-        if s:
+        if not s and ('registro social de hogares' in text or re.search(r'\brsh\b', title)):
+            decision, reason = 'EXCLUIDA', 'Capacitación del Registro Social de Hogares sin contenido sanitario específico'
+        elif s:
             decision, reason = 'A', 'Servicio formativo con contenido sanitario específico'
         elif a:
             decision, reason = 'C', 'Servicio formativo con pertinencia sanitaria ambigua: revisar'
