@@ -2,68 +2,83 @@ import streamlit as st
 import pandas as pd
 from pathlib import Path
 
-st.set_page_config(page_title="Radar Compra Ágil Salud", page_icon="🏥", layout="wide")
-st.title("🏥 Radar Compra Ágil Salud")
-st.caption("Inteligencia de mercado de capacitación sanitaria · Chile · Versión inicial")
-
-DATA = Path(__file__).parent / "data" / "oportunidades_2026.csv"
-
+st.set_page_config(page_title='Radar Compra Ágil Salud',page_icon='🏥',layout='wide')
+D=Path(__file__).parent/'data'
 @st.cache_data
-def cargar_datos(path):
-    return pd.read_csv(path, dtype=str, keep_default_na=False)
+def cargar(nombre):
+    p=D/f'{nombre}.csv'
+    return pd.read_csv(p,dtype=str,keep_default_na=False,encoding='utf-8-sig') if p.exists() else pd.DataFrame()
 
-if not DATA.exists():
-    st.info("La aplicación está publicada. Pendiente: conectar los registros reales de 2026 y programar la actualización automática mediante la API.")
-    st.subheader("Módulos del Radar")
-    for titulo, descripcion in [
-        ("Panorama del mercado", "Oportunidades, presupuestos y tendencias"),
-        ("Oportunidades vigentes", "Compras sanitarias clasificadas y priorizadas"),
-        ("Compradores", "Organismos y demanda de capacitación"),
-        ("Competidores", "Proveedores y adjudicaciones verificadas"),
-        ("Capacitación asincrónica", "Oportunidades con evidencia explícita de modalidad"),
-    ]:
-        st.markdown(f"**{titulo}** — {descripcion}")
-    st.stop()
+clas=cargar('clasificacion'); adj=cargar('adjudicaciones'); ofertas=cargar('ofertas'); opp=cargar('oportunidades')
+st.title('🏥 Radar Compra Ágil Salud')
+st.caption('Mercado Público de Chile · Base inicial 2026 · Próxima fase: actualización automática por API')
+if clas.empty:
+    st.warning('No se encontró la base de clasificación sanitaria.');st.stop()
 
-df = cargar_datos(DATA)
-if df.empty:
-    st.warning("El archivo de datos existe, pero no contiene registros.")
-    st.stop()
+# La clasificación contiene también filas excluidas; el panel principal solo muestra A, B y C.
+clas=clas[clas['Pertinencia sanitaria'].str.match(r'^[ABC]\s*-',case=False,na=False)].copy()
+if clas.empty:
+    st.warning('No hay registros sanitarios A/B/C en esta exportación.');st.stop()
 
-st.sidebar.header("Filtros")
-if "Pertinencia sanitaria" in df.columns:
-    opciones = sorted(df["Pertinencia sanitaria"].dropna().unique().tolist())
-    seleccion = st.sidebar.multiselect("Pertinencia sanitaria", opciones, default=opciones)
-    df = df[df["Pertinencia sanitaria"].isin(seleccion)]
-if "Modalidad" in df.columns:
-    opciones = sorted(df["Modalidad"].dropna().unique().tolist())
-    seleccion = st.sidebar.multiselect("Modalidad", opciones, default=opciones)
-    df = df[df["Modalidad"].isin(seleccion)]
+st.sidebar.header('Filtros')
+def filtro(df,col,etiqueta):
+    if col not in df:return df
+    opts=sorted(x for x in df[col].unique() if x)
+    chosen=st.sidebar.multiselect(etiqueta,opts,default=opts)
+    return df[df[col].isin(chosen)]
+clas=filtro(clas,'Pertinencia sanitaria','Pertinencia')
+clas=filtro(clas,'Modalidad','Modalidad')
+clas=filtro(clas,'Area tematica','Área temática')
+q=st.sidebar.text_input('Buscar compra, curso u organismo')
+if q:
+    cols=[x for x in ['Codigo','Nombre oportunidad','Organismo comprador'] if x in clas]
+    clas=clas[clas[cols].apply(lambda s:s.str.contains(q,case=False,regex=False,na=False)).any(axis=1)]
 
-tabs = st.tabs(["Panorama", "Oportunidades", "Compradores", "Competidores", "Online asincrónico"])
+codes=set(clas['Codigo'])
+adj_f=adj[adj['Codigo Compra Agil'].isin(codes)] if not adj.empty else adj
+of_f=ofertas[ofertas['Codigo Compra Agil'].isin(codes)] if not ofertas.empty else ofertas
+
+def clp(s):
+    n=pd.to_numeric(s,errors='coerce').fillna(0)
+    return float(n.sum())
+
+tabs=st.tabs(['📊 Panorama','🔎 Oportunidades','🏛️ Compradores','🏆 Competidores','💻 Online asincrónico'])
 with tabs[0]:
-    c1,c2,c3 = st.columns(3)
-    c1.metric("Oportunidades", df["Codigo"].nunique() if "Codigo" in df else len(df))
-    c2.metric("Organismos compradores", df["Organismo comprador"].nunique() if "Organismo comprador" in df else "Sin datos")
-    c3.metric("Proveedores identificados", df["Proveedor"].replace("",pd.NA).nunique() if "Proveedor" in df else "Sin datos")
-    if "Area tematica" in df:
-        st.bar_chart(df["Area tematica"].value_counts())
+    a,b,c,d=st.columns(4)
+    a.metric('Oportunidades sanitarias',len(clas))
+    b.metric('Compradores',clas['Organismo comprador'].nunique())
+    c.metric('Presupuestos CLP declarados',f"${clp(clas.loc[clas['Moneda'].str.upper().eq('CLP'),'Presupuesto']):,.0f}".replace(',','.'))
+    d.metric('Ofertas registradas',len(of_f))
+    st.caption('Presupuestos solo en CLP; no se convierten otras monedas ni se interpretan ofertas como adjudicaciones.')
+    l,r=st.columns(2)
+    with l:
+        st.subheader('Áreas temáticas');st.bar_chart(clas['Area tematica'].value_counts())
+    with r:
+        st.subheader('Modalidades');st.bar_chart(clas['Modalidad'].value_counts())
+    st.subheader('Clasificación sanitaria');st.dataframe(clas['Pertinencia sanitaria'].value_counts().rename_axis('Clasificación').reset_index(name='Compras'),hide_index=True)
 with tabs[1]:
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.subheader('Oportunidades sanitarias A, B y C')
+    st.caption('La categoría C requiere revisión; no se presenta como capacitación clínica confirmada.')
+    st.dataframe(clas,use_container_width=True,hide_index=True)
+    st.download_button('Descargar oportunidades filtradas',clas.to_csv(index=False).encode('utf-8-sig'),'radar_oportunidades_filtradas.csv','text/csv')
 with tabs[2]:
-    if "Organismo comprador" in df:
-        st.dataframe(df["Organismo comprador"].value_counts().rename_axis("Comprador").reset_index(name="Oportunidades"), hide_index=True)
-    else:
-        st.info("Pendiente de integrar información de compradores.")
+    st.subheader('Compradores por número de oportunidades')
+    st.dataframe(clas['Organismo comprador'].value_counts().rename_axis('Comprador').reset_index(name='Oportunidades'),hide_index=True,use_container_width=True)
 with tabs[3]:
-    if "Proveedor" in df:
-        st.dataframe(df[df["Proveedor"] != ""][["Proveedor"]].value_counts().reset_index(name="Registros"), hide_index=True)
+    st.subheader('Ofertas registradas')
+    if of_f.empty:st.info('No hay ofertas asociadas a las compras visibles con los filtros actuales.')
     else:
-        st.info("Pendiente de integrar proveedores y adjudicaciones verificadas.")
+        x=of_f.copy()
+        x['Monto total oferta']=pd.to_numeric(x['Monto total oferta'],errors='coerce')
+        cols=['Codigo Compra Agil','Proveedor','Proveedor seleccionado','Monto total oferta','Moneda','Fecha cotizacion']
+        st.dataframe(x[[c for c in cols if c in x]],hide_index=True,use_container_width=True)
+        st.caption('Proveedor seleccionado no equivale a orden de compra emitida ni a pago confirmado.')
+    st.subheader('Seguimiento de adjudicaciones / selección')
+    if adj_f.empty:st.info('No hay registros de seguimiento para las compras visibles.')
+    else:st.dataframe(adj_f,use_container_width=True,hide_index=True)
 with tabs[4]:
-    if "Modalidad" in df:
-        asinc = df[df["Modalidad"].str.contains("asincr", case=False, na=False)]
-        st.caption("Coincidencias textuales preliminares; la evidencia de modalidad se validará en la siguiente versión.")
-        st.dataframe(asinc, use_container_width=True, hide_index=True)
-    else:
-        st.info("Pendiente de integrar modalidades.")
+    st.subheader('Capacitación online asincrónica')
+    async_df=clas[clas['Modalidad'].str.contains('asincr',case=False,na=False)]
+    st.metric('Oportunidades con modalidad asincrónica registrada',len(async_df))
+    st.dataframe(async_df,use_container_width=True,hide_index=True)
+    st.caption('La modalidad proviene de la clasificación del Radar; verificar evidencia y adjuntos antes de cotizar.')
