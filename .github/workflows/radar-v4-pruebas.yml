@@ -11,6 +11,7 @@ on:
       - 'scripts/reclasificar_radar_v4.py'
       - 'scripts/probar_integracion_v4.py'
       - 'scripts/auditar_cache_v4.py'
+      - 'scripts/preparar_dashboard_v4.py'
       - '.github/workflows/radar-v4-pruebas.yml'
   workflow_dispatch:
 
@@ -32,7 +33,7 @@ jobs:
       - name: Instalar requests
         run: python -m pip install 'requests>=2.31,<3'
       - name: Comprobar sintaxis
-        run: python -m compileall -q scripts/actualizar_radar_v4.py scripts/probar_clasificador_v4.py scripts/reclasificar_radar_v4.py scripts/probar_integracion_v4.py scripts/auditar_cache_v4.py
+        run: python -m compileall -q scripts/actualizar_radar_v4.py scripts/probar_clasificador_v4.py scripts/reclasificar_radar_v4.py scripts/probar_integracion_v4.py scripts/auditar_cache_v4.py scripts/preparar_dashboard_v4.py
       - name: Pruebas de regresion sin API
         run: python scripts/probar_clasificador_v4.py
       - name: Pruebas integradas sin API
@@ -48,11 +49,15 @@ jobs:
           test -s /tmp/radar-captura/auditoria_v4.csv
       - name: Auditar 105 registros sin consultas API
         run: python scripts/auditar_cache_v4.py /tmp/radar-captura/detalles_crudos_v4.jsonl /tmp/radar-captura/auditoria_v4.csv staging_auditoria_offline_v4
+      - name: Preparar datos de dashboard solo en staging
+        run: python scripts/preparar_dashboard_v4.py /tmp/radar-captura/detalles_crudos_v4.jsonl staging_dashboard_v4
       - name: Guardar solo comparacion sin datos crudos
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: radar-v4-auditoria-offline
-          path: staging_auditoria_offline_v4/
+          path: |
+            staging_auditoria_offline_v4/
+            staging_dashboard_v4/
           if-no-files-found: warn
           retention-days: 14
