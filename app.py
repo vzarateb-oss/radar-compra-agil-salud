@@ -3,7 +3,7 @@ import pandas as pd
 from pathlib import Path
 
 st.set_page_config(page_title='Radar Compra Ágil Salud',page_icon='🏥',layout='wide')
-D=Path(__file__).parent/'data'
+D=Path(__file__).parent
 @st.cache_data
 def cargar(nombre):
     p=D/f'{nombre}.csv'
