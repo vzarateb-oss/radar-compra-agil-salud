@@ -188,12 +188,13 @@ def main():
     if not found:
         print('ERROR: ningún registro recuperado');return 1
     selected=list(found.items())[:MAX_DETALLES]
-    accepted=[];audit=[];failed=0
+    accepted=[];audit=[];failed=0;raw_details=[]
     for i,(code,listing) in enumerate(selected,1):
         try:
             d=api(s,'/v2/compra-agil/'+requests.utils.quote(code,safe=''))
             if not isinstance(d,dict):raise ValueError('Detalle no es objeto')
             c=classify(d)
+            raw_details.append({'codigo':code,'detalle':d})
             prod=' | '.join(str(p.get('nombre','')) for p in (d.get('productos_solicitados') or []) if isinstance(p,dict))
             audit.append({'Codigo':code,'Nombre oportunidad':d.get('nombre',''),'Decision':c['decision'],'Motivo':c['reason'],'Evidencia formativa':c['form'],'Evidencia sanitaria':c['health'],'Evidencia exclusion':c['negative'],'Modalidad':c['mode'],'Evidencia modalidad':c['mode_evidence'],'Productos solicitados':prod,'Descripcion':d.get('descripcion',''),'Detalle consultado':'SI','Objeto de compra':c['obj'],'Evidencia objeto':c['obj_evidence']})
             if c['decision'] in ('A','C'):
@@ -202,13 +203,16 @@ def main():
         except (RuntimeError,ValueError) as e:
             failed+=1;failures.append(f'Detalle {code}: {e}');audit.append({'Codigo':code,'Nombre oportunidad':listing.get('nombre',''),'Decision':'PENDIENTE','Motivo':str(e),'Detalle consultado':'NO','Objeto de compra':'No determinado','Evidencia objeto':''});print(f'ADVERTENCIA: detalle {i}/{len(selected)} {code}')
         time.sleep(.35)
+    with (SALIDA/'detalles_crudos_v4.jsonl').open('w',encoding='utf-8') as raw_file:
+        for item in raw_details:
+            raw_file.write(json.dumps(item,ensure_ascii=False,default=str)+'\n')
     write_csv('clasificacion_v4.csv',accepted,CAMPOS)
     write_csv('auditoria_v4.csv',audit,AUDIT)
     counts={k:sum(x.get('Decision')==k for x in audit) for k in ('A','C','EXCLUIDA','PENDIENTE')}
     report={'ejecucion_completa':not failures and len(selected)==len(found),'paginas_listado_esperadas_maximo':len(TERMINOS)*PAGINAS,'fecha_utc':datetime.now(timezone.utc).isoformat(),'paginas_por_termino':PAGINAS,'paginas_listado_exitosas':listing_pages,'oportunidades_unicas_encontradas':len(found),'detalles_intentados':len(selected),'detalles_sin_procesar_por_limite':max(0,len(found)-len(selected)),'clasificacion':counts,'detalles_fallidos':failed,'fallos':failures,'advertencia':'Heurística V4 piloto provisional: requiere validación humana, auditoría de exclusiones y comparación con Apps Script V3.8.1. No procesa adjuntos, ofertas ni adjudicaciones. No modifica producción.'}
     (SALIDA/'reporte_v4.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     print('RESUMEN: '+json.dumps({k:v for k,v in report.items() if k not in ('fallos','advertencia')},ensure_ascii=False))
-    print('ARCHIVOS: staging_radar_v4/clasificacion_v4.csv, auditoria_v4.csv, reporte_v4.json')
+    print('ARCHIVOS: staging_radar_v4/clasificacion_v4.csv, auditoria_v4.csv, detalles_crudos_v4.jsonl, reporte_v4.json')
     print('No se modificaron CSV de producción ni Google Sheets.')
     if failures or len(selected)<len(found):
         print('ERROR: ejecución incompleta; NO apta para publicación. Revisar reporte_v4.json')
