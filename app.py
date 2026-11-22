@@ -1,3 +1,35 @@
+import streamlit as st
+import pandas as pd
+from pathlib import Path
+
+st.set_page_config(page_title='Radar Compra Ágil Salud', page_icon='🏥', layout='wide')
+BASE = Path(__file__).resolve().parent
+
+@st.cache_data(ttl=300)
+def cargar(nombre):
+    rutas = [BASE / f'{nombre}.csv', BASE / 'data' / f'{nombre}.csv']
+    for ruta in rutas:
+        if ruta.is_file():
+            try:
+                df = pd.read_csv(ruta, dtype=str, keep_default_na=False, encoding='utf-8-sig')
+                return df, str(ruta.relative_to(BASE)), ''
+            except Exception as e:
+                return pd.DataFrame(), str(ruta.relative_to(BASE)), str(e)
+    return pd.DataFrame(), '', 'No existe el archivo en la raíz ni en data/'
+
+archivos = ['clasificacion', 'adjudicaciones', 'ofertas', 'oportunidades']
+resultados = {nombre: cargar(nombre) for nombre in archivos}
+clas, adj, ofertas, opp = [resultados[n][0] for n in archivos]
+
+st.title('🏥 Radar Compra Ágil Salud')
+st.caption('Mercado Público de Chile · Base inicial 2026 · Próxima fase: actualización automática por API')
+
+with st.sidebar.expander('Diagnóstico de archivos', expanded=clas.empty):
+    for nombre, (df, ruta, error) in resultados.items():
+        if error:
+            st.warning(f'{nombre}.csv: {error}')
+        else:
+            st.success(f'{ruta}: {len(df)} filas')
 
 if clas.empty:
     st.error('No fue posible cargar la base de clasificación sanitaria.')
