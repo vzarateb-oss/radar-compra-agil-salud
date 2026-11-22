@@ -29,3 +29,44 @@ assert "asincronía no confirmada" in online, online
 autogestion = classify(caso("Capacitaciones programa Más AMA", "Servicio de capacitación en estimulación cognitiva", "Curso online y autogestionado para profesionales de salud"))["mode"].lower()
 assert "autogestionada" in autogestion and "no confirmada" in autogestion, autogestion
 print(f"OK: {len(casos)} clasificaciones y 3 modalidades sin API")
+
+# Simulaciones de red: no realizan llamadas a Mercado Público.
+from unittest.mock import patch
+import requests
+from actualizar_radar_v4 import api
+
+class FakeResponse:
+    def __init__(self, status, payload=None):
+        self.status_code = status
+        self.payload = payload if payload is not None else {"success": "OK", "payload": {"items": []}}
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            error = requests.HTTPError(f"HTTP {self.status_code}")
+            error.response = self
+            raise error
+    def json(self):
+        return self.payload
+
+class FakeSession:
+    def __init__(self, responses):
+        self.responses = iter(responses)
+        self.calls = 0
+    def get(self, *args, **kwargs):
+        self.calls += 1
+        return next(self.responses)
+
+with patch("actualizar_radar_v4.time.sleep", return_value=None):
+    session = FakeSession([FakeResponse(504), FakeResponse(504), FakeResponse(200)])
+    assert api(session, "/v2/compra-agil") == {"items": []}
+    assert session.calls == 3, session.calls
+
+    session = FakeSession([FakeResponse(401)])
+    try:
+        api(session, "/v2/compra-agil")
+    except RuntimeError as exc:
+        assert "HTTP 401" in str(exc)
+    else:
+        raise AssertionError("Se esperaba error HTTP 401")
+    assert session.calls == 1, "Un error 401 no debe reintentarse"
+
+print("OK: reintentos HTTP 504 y corte ante HTTP 401, sin red")
