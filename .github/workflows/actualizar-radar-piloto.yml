@@ -35,7 +35,7 @@ jobs:
         with:
           name: radar-piloto-resultados
           path: |
-            clasificacion_piloto.csv
-            reporte_piloto.json
+            staging_radar/clasificacion_piloto.csv
+            staging_radar/reporte_piloto.json
           if-no-files-found: warn
           retention-days: 14
