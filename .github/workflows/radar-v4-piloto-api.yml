@@ -1,0 +1,46 @@
+name: Radar V4 - piloto API real (solo staging)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: radar-v4-piloto-api
+  cancel-in-progress: false
+
+jobs:
+  piloto-api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - name: Descargar rama V4
+        uses: actions/checkout@v4
+        with:
+          ref: desarrollo/radar-v4
+          persist-credentials: false
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar requests
+        run: python -m pip install 'requests>=2.31,<3'
+      - name: Pruebas sin API
+        run: |
+          python scripts/probar_clasificador_v4.py
+          python scripts/probar_integracion_v4.py
+      - name: Ejecutar piloto con Mercado Publico
+        env:
+          MERCADOPUBLICO_TICKET: ${{ secrets.MERCADOPUBLICO_TICKET }}
+          RADAR_PAGINAS: '2'
+          RADAR_DETALLES_MAX: '150'
+        run: python scripts/actualizar_radar_v4.py
+      - name: Guardar resultados para auditoria (aunque falle la API)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: radar-v4-piloto-api
+          path: staging_radar_v4/
+          if-no-files-found: warn
+          retention-days: 14
