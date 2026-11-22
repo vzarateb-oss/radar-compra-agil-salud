@@ -181,7 +181,7 @@ def main():
                     if isinstance(item,dict) and item.get('codigo'):found.setdefault(str(item['codigo']),item)
                 print(f'LISTADO OK: {term} página {page}, {len(items)} registros')
                 pg=payload.get('paginacion') or {}
-                if len(items)<10 or (isinstance(pg,dict) and page>=int(pg.get('total_paginas') or page)):break
+                if len(items)<10 or (isinstance(pg,dict) and pg.get('total_paginas') is not None and page>=int(pg['total_paginas'])):break
             except (RuntimeError,ValueError) as e:
                 failures.append(f'Listado {term} página {page}: {e}');print(f'ADVERTENCIA: listado {term} página {page}');break
             time.sleep(.35)
