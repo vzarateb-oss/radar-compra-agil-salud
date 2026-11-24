@@ -1,6 +1,7 @@
 from html import escape
 from datetime import datetime, timedelta
 import re
+import unicodedata
 from zoneinfo import ZoneInfo
 
 from google.auth.transport.requests import AuthorizedSession
@@ -90,6 +91,262 @@ def plazo(cierre, ahora):
 NIVELES_VIGENTES = ["🔴 Hasta 24 h", "🟠 Hasta 72 h", "🟢 Vigente"]
 
 
+
+FOCO_INFANTIL = "Salud mental infantil y adolescencia"
+FOCO_PUBLICO = "Salud pública, epidemiología y gestión sanitaria"
+FOCOS = [FOCO_INFANTIL, FOCO_PUBLICO]
+MODALIDADES = ["Presencial", "Online", "Mixta", "Por verificar"]
+
+# Códigos de Beta 9.3 con evidencia temática y etaria en el título o área.
+EVIDENCIA_INFANTIL = frozenset("""
+1057385-64-COT25
+1057389-1903-COT26
+1057404-270-COT26
+1057432-380-COT24
+1057432-418-COT24
+1057496-920-COT25
+1057496-920-COT26
+1057501-2439-COT25
+1057503-2106-COT25
+1057503-2150-COT26
+1057510-1782-COT26
+1057510-1907-COT26
+1057510-1914-COT24
+1057510-556-COT24
+1057510-657-COT24
+1057539-1300-COT24
+1057539-681-COT24
+1057539-700-COT24
+1057539-727-COT24
+1057539-728-COT24
+1069417-861-COT25
+1069417-888-COT25
+1069417-972-COT25
+1075963-1367-COT25
+1079563-41-COT24
+1079650-157-COT25
+1079650-196-COT25
+1079650-99-COT26
+1099834-101-COT24
+1099834-106-COT24
+1208094-23-COT25
+1208094-35-COT26
+1208103-43-COT25
+1209395-51-COT25
+1224953-302-COT26
+1272565-301-COT24
+1272565-303-COT24
+1347775-33-COT25
+1347870-137-COT25
+1380-2325-COT25
+1501728-57-COT26
+1628-283-COT25
+1643-1104-COT25
+1736-2662-COT24
+1736-2697-COT24
+2080-652-COT26
+2092-62-COT25
+2098-713-COT25
+2101-449-COT25
+2153-90-COT24
+2200-140-COT25
+2200-156-COT25
+2215-400-COT25
+2284-1009-COT25
+2292-1134-COT25
+2307-502-COT26
+2377-5-COT24
+2381-1115-COT25
+2445-179-COT26
+2484-97-COT25
+2548-846-COT24
+2548-862-COT24
+2548-880-COT24
+2677-106-COT26
+2678-203-COT25
+2678-211-COT25
+2703-163-COT26
+2710-170-COT25
+2757-843-COT25
+2757-844-COT25
+2757-845-COT25
+2762-461-COT25
+2766-676-COT25
+2803-145-COT26
+2803-82-COT26
+2805-263-COT26
+3014-17-COT25
+3334-82-COT26
+3335-729-COT26
+3577-151-COT25
+3608-289-COT26
+3636-134-COT26
+3651-80-COT24
+3674-35-COT26
+3747-301-COT26
+3747-303-COT26
+3747-304-COT26
+3747-406-COT25
+3747-72-COT25
+3765-172-COT24
+3874-193-COT25
+3877-534-COT26
+3952-5-COT25
+3956-46-COT26
+3956-75-COT25
+4013-178-COT26
+4026-66-COT24
+4083-525-COT26
+4127-56-COT25
+418-952-COT26
+4256-253-COT26
+4323-105-COT24
+4329-206-COT26
+4358-87-COT24
+4493-700-COT25
+4559-13-COT24
+4559-324-COT25
+4704-63-COT24
+4707-62-COT24
+4707-85-COT24
+4895-194-COT24
+4968-514-COT25
+5056-247-COT25
+5056-35-COT26
+507428-109-COT26
+507428-206-COT26
+507428-396-COT25
+507428-447-COT26
+509143-34-COT26
+522-52-COT24
+5907-132-COT25
+5907-142-COT25
+619-90-COT25
+635-492-COT25
+635-614-COT25
+757-744-COT24
+810406-100-COT25
+956-432-COT26
+956-492-COT26
+""".split())
+
+
+def normalizar_radar(valor):
+    return "".join(
+        c for c in unicodedata.normalize("NFD", str(valor or "").lower())
+        if not unicodedata.combining(c)
+    )
+
+
+def modalidad_resumen(valor):
+    texto = normalizar_radar(valor)
+    if "ambigu" in texto or "no determin" in texto:
+        return "Por verificar"
+    if re.search(r"\b(mixt[ao]|hibrid[ao]|semipresencial|b-learning)\b", texto):
+        return "Mixta"
+    presencial = "presencial" in texto
+    online = bool(re.search(r"online|en linea|virtual|a distancia|asincron|sincron", texto))
+    if presencial and online:
+        return "Mixta"
+    if presencial:
+        return "Presencial"
+    if online:
+        return "Online"
+    return "Por verificar"
+
+
+def focos_compra(fila):
+    texto = normalizar_radar(" ".join(
+        str(fila.get(campo) or "") for campo in ("Oportunidad", "Tema", "Área")
+    ))
+    mental = re.search(r"salud mental|psiquiatr|psicolog|psicosocial|suicid|neurodesarrollo|autis|\btea\b|tdah", texto)
+    infantil = re.search(r"infantil|infanto|adolescen|pediatr|ninez|\bnin[oa]s?\b|escolar|primera infancia|menores de edad", texto)
+    codigos = str(fila.get("Códigos de evidencia") or "").split(";")
+    tiene_evidencia = any(codigo.strip() in EVIDENCIA_INFANTIL for codigo in codigos)
+    salud_publica = re.search(
+        r"salud publica|epidemiolog|vigilancia sanitaria|promocion de la salud|gestion (?:y calidad )?sanitaria"
+        r"|gestion (?:en|de) salud|gestion clinica|gestion hospitalaria|calidad sanitaria"
+        r"|gestion.{0,30}(?:atencion primaria|\baps\b)|atencion primaria.{0,30}gestion|salud colectiva",
+        texto,
+    )
+    return tuple(
+        foco for foco, coincide in ((FOCO_INFANTIL, (mental and infantil) or tiene_evidencia),
+                                    (FOCO_PUBLICO, salud_publica)) if coincide
+    )
+
+
+def clasificar_vista(datos):
+    datos = datos.copy()
+    datos["_focos"] = [focos_compra(fila) for fila in datos.to_dict("records")]
+    columna = "Modalidad histórica" if "Modalidad histórica" in datos else "Modalidad"
+    datos["_formato"] = datos[columna].map(modalidad_resumen)
+    return datos
+
+
+def filtrar_foco(datos, foco):
+    if foco == "Todas las áreas":
+        return datos
+    if foco == "Otras áreas":
+        return datos[datos["_focos"].map(lambda valor: not valor).astype(bool)]
+    return datos[datos["_focos"].map(lambda valor: foco in valor).astype(bool)]
+
+
+def formatos_en_texto(datos):
+    cuenta = datos["_formato"].value_counts()
+    return " · ".join(f"{modo} {cuenta.get(modo, 0)}" for modo in MODALIDADES if cuenta.get(modo, 0))
+
+
+def destacar_focos(actuales, futuras, captura_disponible):
+    st.markdown("### Áreas prioritarias")
+    futuras = clasificar_vista(futuras)
+    futuras = futuras[futuras["Ventana estimada"].str.fullmatch(r"\d{4}-Q[1-4]")]
+    for columna, foco in zip(st.columns(2), FOCOS):
+        with columna.container(border=True):
+            st.markdown(f"#### {foco}")
+            hoy = filtrar_foco(actuales, foco)
+            despues = filtrar_foco(futuras, foco)
+            izquierda, derecha = st.columns(2)
+            izquierda.metric("Vigentes", len(hoy) if captura_disponible else "—")
+            derecha.metric("Señales con trimestre", len(despues))
+            actual = formatos_en_texto(hoy) if captura_disponible else ""
+            futuro = formatos_en_texto(despues)
+            if actual:
+                st.caption(f"Vigentes · {actual}")
+            if futuro:
+                st.caption(f"Histórico · {futuro}")
+            if captura_disponible and not hoy.empty:
+                primera = hoy.assign(_fecha=hoy["Cierre"].map(fecha_chile)).sort_values("_fecha").iloc[0]
+                st.write(f"Primer cierre: {primera['Tiempo restante']} · {primera['Código']}.")
+            if not despues.empty:
+                trimestres = despues["Ventana estimada"].value_counts().sort_index()
+                ventana = trimestres.idxmax()
+                temas = despues.loc[despues["Ventana estimada"].eq(ventana), "Tema"]
+                tema = temas[temas.ne("")].value_counts().head(1)
+                if not tema.empty:
+                    st.write(f"Señal para preparar: {tema.index[0]} · {ventana}.")
+            abrir, seguir = st.columns(2)
+            if abrir.button("Ver vigentes", key=f"abrir-{foco}", on_click=abrir_foco, args=("Abiertas ahora", foco)):
+                st.rerun()
+            if seguir.button("Ver señales", key=f"seguir-{foco}", on_click=abrir_foco, args=("Próximas oportunidades", foco)):
+                st.rerun()
+
+
+def abrir_foco(seccion, foco):
+    st.session_state["radar_navegacion"] = seccion
+    st.session_state["radar_foco"] = foco
+    st.session_state[f"foco-{seccion}"] = foco
+
+
+def filtros_area_formato(datos):
+    area, formato = st.columns([2, 1])
+    foco = area.selectbox("Área de capacitación", ["Todas las áreas", *FOCOS, "Otras áreas"],
+                          index=["Todas las áreas", *FOCOS, "Otras áreas"].index(st.session_state.get("radar_foco", "Todas las áreas")),
+                          key=f"foco-{st.session_state.get('radar_navegacion', '')}")
+    modalidad = formato.selectbox("Formato", ["Todos", *MODALIDADES])
+    datos = filtrar_foco(datos, foco)
+    return datos if modalidad == "Todos" else datos[datos["_formato"].eq(modalidad)]
+
+
 def mostrar_cierres(datos):
     cierres = datos[datos["Semáforo"].isin(NIVELES_VIGENTES)].copy()
     if cierres.empty:
@@ -173,7 +430,7 @@ def mostrar_abiertas(filas, asincronicas=False, inicio=False, futuras=None):
     if not {"Código", "Cierre", "Modalidad", "Semáforo", "Tiempo restante"} <= set(datos.columns):
         st.error("La vista en vivo no tiene las columnas requeridas.")
         return
-    datos = datos[datos["Código"].ne("")].copy()
+    datos = clasificar_vista(datos[datos["Código"].ne("")])
     if asincronicas:
         datos = datos[datos["Modalidad"].str.contains(r"\basincr", case=False, regex=True)]
     plazos = [plazo(cierre, ahora) for cierre in datos["Cierre"]]
@@ -181,6 +438,8 @@ def mostrar_abiertas(filas, asincronicas=False, inicio=False, futuras=None):
     datos["Tiempo restante"] = [p[1] for p in plazos]
     vigentes = datos["Semáforo"].isin(NIVELES_VIGENTES)
     captura_disponible = estado.startswith(("Última consulta completa", "Captura parcial"))
+    if inicio and futuras is not None:
+        destacar_focos(datos[vigentes], tabla_radar(futuras), captura_disponible)
     c1, c2, c3 = st.columns(3)
     c1.metric("Vigentes en la captura", int(vigentes.sum()) if captura_disponible else "—")
     c2.metric("Cierran en 24 h", int(datos["Semáforo"].eq("🔴 Hasta 24 h").sum()) if captura_disponible else "—")
@@ -193,10 +452,12 @@ def mostrar_abiertas(filas, asincronicas=False, inicio=False, futuras=None):
             consulta = buscar.text_input("Buscar", placeholder="Código, curso u organismo").strip()
             solo_vigentes = estado_filtro.toggle("Solo vigentes", value=True)
             seleccion = modalidad.selectbox("Modalidad", ["Todas", *sorted(set(datos["Modalidad"]) - {""})])
+    if not inicio:
+        datos = filtros_area_formato(datos)
     if seleccion != "Todas":
         datos = datos[datos["Modalidad"].eq(seleccion)]
     if solo_vigentes:
-        datos = datos[vigentes]
+        datos = datos[datos["Semáforo"].isin(NIVELES_VIGENTES)]
     if consulta:
         columnas = [c for c in ["Código", "Oportunidad", "Organismo"] if c in datos]
         filtro = datos[columnas].apply(lambda c: c.str.contains(consulta, case=False, regex=False)).any(axis=1)
@@ -241,7 +502,7 @@ def mostrar_futuras(filas):
     st.subheader("Próximas oportunidades")
     st.caption(texto_celda(filas, 1))
     st.info(texto_celda(filas, 2))
-    datos = tabla_radar(filas)
+    datos = filtros_area_formato(clasificar_vista(tabla_radar(filas)))
     if "Prioridad" in datos:
         prioridad = st.selectbox("Prioridad", ["Todas", *dict.fromkeys(datos["Prioridad"])])
         if prioridad != "Todas":
@@ -254,7 +515,7 @@ def mostrar_futuras(filas):
         st.markdown("#### Lectura de las señales seleccionadas")
         resumen_futuro(datos, mostrar_temas=True)
     with st.expander("Ver señales y evidencia", expanded=False):
-        st.dataframe(datos, hide_index=True, use_container_width=True)
+        st.dataframe(datos.drop(columns=["_focos", "_formato"]), hide_index=True, use_container_width=True)
 
 
 def mostrar_pac(filas):
@@ -433,6 +694,7 @@ st.markdown("""
 seccion = st.sidebar.radio(
     "Navegación",
     ["Inicio", "Abiertas ahora", "Online asincrónico", "Próximas oportunidades", "Plan Anual de Compras", "Base inicial"],
+    key="radar_navegacion",
 )
 if seccion == "Base inicial":
     mostrar_base_inicial()
