@@ -1,3 +1,4 @@
+from html import escape
 from datetime import datetime, timedelta
 import re
 from zoneinfo import ZoneInfo
@@ -84,8 +85,32 @@ def plazo(cierre, ahora):
     return nivel, f"{horas} h {minutos:02d} min"
 
 
-def mostrar_abiertas(filas, asincronicas=False):
-    st.subheader("Online asincrónico" if asincronicas else "Abiertas ahora")
+
+def mostrar_tarjeta(compra):
+    nivel = compra["Semáforo"]
+    color = {"🔴 Hasta 24 h": "#a62736", "🟠 Hasta 72 h": "#955900", "🟢 Vigente": "#176141"}.get(nivel, "#53676b")
+    def dato(campo):
+        return escape(str(compra.get(campo) or "Sin dato"))
+    fechas = "".join(
+        f"<div><small>{etiqueta}</small><strong>{dato(campo)}</strong></div>"
+        for etiqueta, campo in [("Publicación", "Publicación"), ("Cierre · hora de Chile", "Cierre"),
+                                ("Tiempo restante", "Tiempo restante"), ("Presupuesto", "Presupuesto")]
+    )
+    with st.container(border=True):
+        st.markdown(
+            f'<article class="radar-card" style="--urgencia:{color}">'
+            f'<span class="radar-badge">{escape(nivel)}</span>'
+            f'<small>{dato("Código")} · {dato("Pertinencia")}</small>'
+            f'<h3>{dato("Oportunidad")}</h3><p>{dato("Organismo")} · {dato("Modalidad")}</p>'
+            f'<div class="radar-dates">{fechas}</div></article>', unsafe_allow_html=True
+        )
+        if re.fullmatch(r"\d+-\d+-COT\d{2}", compra["Código"]):
+            st.link_button("Ver ficha en Mercado Público",
+                           "https://buscador.mercadopublico.cl/ficha?code=" + compra["Código"])
+
+
+def mostrar_abiertas(filas, asincronicas=False, inicio=False):
+    st.subheader("Próximos cierres" if inicio else "Online asincrónico" if asincronicas else "Abiertas ahora")
     estado = texto_celda(filas, 1)
     st.caption(estado or "Sin captura de la API")
     nota = texto_celda(filas, 2)
@@ -112,8 +137,16 @@ def mostrar_abiertas(filas, asincronicas=False):
     c1.metric("Vigentes en la captura", int(vigentes.sum()) if captura_disponible else "—")
     c2.metric("Cierran en 24 h", int(datos["Semáforo"].eq("🔴 Hasta 24 h").sum()) if captura_disponible else "—")
     c3.metric("Por verificar", int(datos["Semáforo"].eq("⚪ Por verificar").sum()) if captura_disponible else "—")
-    solo_vigentes = st.toggle("Mostrar solo vigentes", value=True)
-    consulta = st.text_input("Buscar por código, curso u organismo").strip()
+    if inicio:
+        solo_vigentes, consulta, seleccion = True, "", "Todas"
+    else:
+        with st.container(border=True):
+            buscar, estado_filtro, modalidad = st.columns([2, 1, 1])
+            consulta = buscar.text_input("Buscar", placeholder="Código, curso u organismo").strip()
+            solo_vigentes = estado_filtro.toggle("Solo vigentes", value=True)
+            seleccion = modalidad.selectbox("Modalidad", ["Todas", *sorted(set(datos["Modalidad"]) - {""})])
+    if seleccion != "Todas":
+        datos = datos[datos["Modalidad"].eq(seleccion)]
     if solo_vigentes:
         datos = datos[vigentes]
     if consulta:
@@ -122,9 +155,17 @@ def mostrar_abiertas(filas, asincronicas=False):
         datos = datos[filtro]
     if datos.empty:
         st.info("La captura disponible no tiene compras que coincidan con estos filtros.")
+        return
+    datos = datos.assign(_cierre=datos["Cierre"].map(fecha_chile)).sort_values("_cierre")
+    if inicio:
+        visibles = datos.head(3)
     else:
-        st.dataframe(datos, hide_index=True, use_container_width=True,
-                     column_config={"Ficha": st.column_config.LinkColumn("Mercado Público", display_text="Abrir ficha")})
+        st.caption(f"{len(datos)} resultados · ordenados por cierre")
+        paginas = (len(datos) + 9) // 10
+        pagina = st.selectbox("Página", range(1, paginas + 1)) if paginas > 1 else 1
+        visibles = datos.iloc[(pagina - 1) * 10:pagina * 10]
+    for compra in visibles.to_dict("records"):
+        mostrar_tarjeta(compra)
 
 
 def mostrar_futuras(filas):
@@ -284,7 +325,9 @@ def mostrar_radar(seccion):
         cargar_radar_privado.clear()
     try:
         abiertas, futuras, pac = cargar_radar_privado()
-        if seccion == "Abiertas ahora":
+        if seccion == "Inicio":
+            mostrar_abiertas(abiertas, inicio=True)
+        elif seccion == "Abiertas ahora":
             mostrar_abiertas(abiertas)
         elif seccion == "Online asincrónico":
             mostrar_abiertas(abiertas, asincronicas=True)
@@ -298,11 +341,25 @@ def mostrar_radar(seccion):
         st.warning("No fue posible leer el Radar privado. Revisa la cuenta de servicio y el permiso de lectura.")
 
 
-st.title("Radar Compra Ágil Salud")
-st.caption("Inteligencia comercial de capacitación sanitaria")
+st.markdown("""
+<style>
+.radar-hero{background:#103c3a;color:white;border-radius:16px;padding:22px 26px;margin-bottom:16px}
+.radar-hero h1{color:white;margin:2px 0;font-size:clamp(1.6rem,4vw,2.25rem)}
+.radar-hero p{color:#b8e4da;margin:0}
+.radar-card{border-left:4px solid var(--urgencia);padding:3px 0 3px 14px}
+.radar-card h3{font-size:1.13rem;padding:4px 0;margin:3px 0}
+.radar-card p{margin:0 0 10px}
+.radar-badge{display:inline-block;border-radius:999px;padding:4px 9px;background:var(--urgencia);color:white;font-weight:700;margin:0 10px 4px 0}
+.radar-dates{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.radar-dates strong,.radar-dates small{display:block}
+[data-testid="stMetric"]{border:1px solid #bdcfcc;border-radius:12px;padding:12px}
+@media(max-width:740px){.radar-dates{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+<header class="radar-hero"><p>Inteligencia comercial de capacitación sanitaria</p><h1>Radar Compra Ágil Salud</h1></header>
+""", unsafe_allow_html=True)
 seccion = st.sidebar.radio(
     "Navegación",
-    ["Abiertas ahora", "Online asincrónico", "Próximas oportunidades", "Plan Anual de Compras", "Base inicial"],
+    ["Inicio", "Abiertas ahora", "Online asincrónico", "Próximas oportunidades", "Plan Anual de Compras", "Base inicial"],
 )
 if seccion == "Base inicial":
     mostrar_base_inicial()
