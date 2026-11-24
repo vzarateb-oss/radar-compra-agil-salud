@@ -80,26 +80,74 @@ def plazo(cierre, ahora):
     segundos = int(fecha.timestamp() - ahora.timestamp())
     if segundos <= 0:
         return "⚪ Cerrada por plazo", "Plazo cerrado"
-    horas, minutos = divmod((segundos + 59) // 60, 60)
+    horas, minutos = divmod(segundos // 60, 60)
+    restante = f"{horas} h {minutos:02d} min" if horas else f"{minutos} min" if minutos else "Menos de 1 min"
     nivel = "🔴 Hasta 24 h" if segundos <= 86400 else "🟠 Hasta 72 h" if segundos <= 259200 else "🟢 Vigente"
-    return nivel, f"{horas} h {minutos:02d} min"
+    return nivel, restante
 
+
+
+NIVELES_VIGENTES = ["🔴 Hasta 24 h", "🟠 Hasta 72 h", "🟢 Vigente"]
+
+
+def mostrar_cierres(datos):
+    cierres = datos[datos["Semáforo"].isin(NIVELES_VIGENTES)].copy()
+    if cierres.empty:
+        return
+    fechas = cierres["_cierre"].dt.strftime("%d/%m")
+    conteos = fechas.value_counts(sort=False).rename_axis("Día de cierre").rename("Compras")
+    st.markdown("#### Cierres por día")
+    st.bar_chart(conteos, color="#188779")
+
+
+def resumen_futuro(datos, mostrar_temas=False):
+    estimadas = datos[datos["Ventana estimada"].str.fullmatch(r"\d{4}-Q[1-4]")]
+    if estimadas.empty:
+        st.info("Estas señales históricas no tienen una ventana estimada con los filtros actuales.")
+        return
+    recurrentes = estimadas[estimadas["Prioridad"].str.startswith("1 ·")]
+    foco = recurrentes if not recurrentes.empty else estimadas
+    por_ventana = foco["Ventana estimada"].value_counts().sort_index()
+    ventana = por_ventana.idxmax()
+    temas = foco.loc[foco["Ventana estimada"].eq(ventana), "Tema"]
+    temas = temas[temas.ne("")]
+    foco_texto = "asincrónicas recurrentes" if not recurrentes.empty else "históricas con ventana estimada"
+    st.write(
+        f"{len(foco)} señales {foco_texto}. La mayor concentración está en {ventana}, "
+        f"con {por_ventana.loc[ventana]} señales. "
+        + (f"Temas a seguir en esa ventana: {', '.join(temas.value_counts().head(3).index)}. " if not temas.empty else "")
+        + "Las ventanas se estiman a partir del histórico y pueden cambiar."
+    )
+    if mostrar_temas:
+        izquierda, derecha = st.columns(2)
+        with izquierda:
+            st.markdown("#### Señales por trimestre")
+            st.bar_chart(estimadas["Ventana estimada"].value_counts().sort_index().rename("Señales"), color="#188779")
+        with derecha:
+            st.markdown("#### Temas con más señales")
+            cuentas = estimadas.loc[estimadas["Tema"].ne(""), "Tema"].value_counts().head(6)
+            if not cuentas.empty:
+                st.bar_chart(cuentas.rename("Señales"), color="#4a7791")
 
 
 def mostrar_tarjeta(compra):
     nivel = compra["Semáforo"]
     color = {"🔴 Hasta 24 h": "#a62736", "🟠 Hasta 72 h": "#955900", "🟢 Vigente": "#176141"}.get(nivel, "#53676b")
+    etiqueta_plazo = "Quedan " + compra["Tiempo restante"] if nivel in NIVELES_VIGENTES else nivel[2:].strip()
+    if compra["Tiempo restante"] == "Menos de 1 min":
+        etiqueta_plazo = compra["Tiempo restante"]
+
     def dato(campo):
         return escape(str(compra.get(campo) or "Sin dato"))
     fechas = "".join(
         f"<div><small>{etiqueta}</small><strong>{dato(campo)}</strong></div>"
         for etiqueta, campo in [("Publicación", "Publicación"), ("Cierre · hora de Chile", "Cierre"),
-                                ("Tiempo restante", "Tiempo restante"), ("Presupuesto", "Presupuesto")]
+                                ("Presupuesto", "Presupuesto")]
     )
     with st.container(border=True):
         st.markdown(
             f'<article class="radar-card" style="--urgencia:{color}">'
-            f'<span class="radar-badge">{escape(nivel)}</span>'
+            f'<span class="radar-badge">{escape(etiqueta_plazo)}</span>'
             f'<small>{dato("Código")} · {dato("Pertinencia")}</small>'
             f'<h3>{dato("Oportunidad")}</h3><p>{dato("Organismo")} · {dato("Modalidad")}</p>'
             f'<div class="radar-dates">{fechas}</div></article>', unsafe_allow_html=True
@@ -109,7 +157,7 @@ def mostrar_tarjeta(compra):
                            "https://buscador.mercadopublico.cl/ficha?code=" + compra["Código"])
 
 
-def mostrar_abiertas(filas, asincronicas=False, inicio=False):
+def mostrar_abiertas(filas, asincronicas=False, inicio=False, futuras=None):
     st.subheader("Próximos cierres" if inicio else "Online asincrónico" if asincronicas else "Abiertas ahora")
     estado = texto_celda(filas, 1)
     st.caption(estado or "Sin captura de la API")
@@ -131,7 +179,7 @@ def mostrar_abiertas(filas, asincronicas=False, inicio=False):
     plazos = [plazo(cierre, ahora) for cierre in datos["Cierre"]]
     datos["Semáforo"] = [p[0] for p in plazos]
     datos["Tiempo restante"] = [p[1] for p in plazos]
-    vigentes = datos["Semáforo"].isin(["🔴 Hasta 24 h", "🟠 Hasta 72 h", "🟢 Vigente"])
+    vigentes = datos["Semáforo"].isin(NIVELES_VIGENTES)
     captura_disponible = estado.startswith(("Última consulta completa", "Captura parcial"))
     c1, c2, c3 = st.columns(3)
     c1.metric("Vigentes en la captura", int(vigentes.sum()) if captura_disponible else "—")
@@ -153,10 +201,31 @@ def mostrar_abiertas(filas, asincronicas=False, inicio=False):
         columnas = [c for c in ["Código", "Oportunidad", "Organismo"] if c in datos]
         filtro = datos[columnas].apply(lambda c: c.str.contains(consulta, case=False, regex=False)).any(axis=1)
         datos = datos[filtro]
+    datos = datos.assign(_cierre=pd.to_datetime(datos["Cierre"].map(fecha_chile))).sort_values("_cierre")
+    activas = datos[datos["Semáforo"].isin(NIVELES_VIGENTES)]
+    with st.container(border=True):
+        st.markdown("#### Qué mirar ahora")
+        if not captura_disponible:
+            st.write("Todavía no hay una captura confirmada para evaluar las compras abiertas.")
+        elif activas.empty:
+            st.write("No hay cierres vigentes verificados para los filtros y la captura que estás viendo.")
+        else:
+            primera = activas.iloc[0]
+            urgentes = int(activas["Semáforo"].eq("🔴 Hasta 24 h").sum())
+            asincronas = int(activas["Modalidad"].str.contains(r"\basincr", case=False, regex=True).sum())
+            st.write(
+                f"{len(activas)} compras vigentes en la vista, {urgentes} dentro de las próximas 24 h "
+                f"y {asincronas} identificadas como asincrónicas. "
+                f"El primer cierre es {primera['Código']} a las {primera['Cierre']} (hora de Chile). "
+                f"Tiempo restante: {primera['Tiempo restante']}."
+            )
+        if inicio and futuras is not None:
+            st.markdown("#### Qué preparar")
+            resumen_futuro(tabla_radar(futuras))
+    mostrar_cierres(datos)
     if datos.empty:
         st.info("La captura disponible no tiene compras que coincidan con estos filtros.")
         return
-    datos = datos.assign(_cierre=datos["Cierre"].map(fecha_chile)).sort_values("_cierre")
     if inicio:
         visibles = datos.head(3)
     else:
@@ -181,7 +250,11 @@ def mostrar_futuras(filas):
         ventana = st.selectbox("Ventana estimada", ["Todas", *sorted(set(datos["Ventana estimada"]))])
         if ventana != "Todas":
             datos = datos[datos["Ventana estimada"].eq(ventana)]
-    st.dataframe(datos, hide_index=True, use_container_width=True)
+    with st.container(border=True):
+        st.markdown("#### Lectura de las señales seleccionadas")
+        resumen_futuro(datos, mostrar_temas=True)
+    with st.expander("Ver señales y evidencia", expanded=False):
+        st.dataframe(datos, hide_index=True, use_container_width=True)
 
 
 def mostrar_pac(filas):
@@ -326,7 +399,7 @@ def mostrar_radar(seccion):
     try:
         abiertas, futuras, pac = cargar_radar_privado()
         if seccion == "Inicio":
-            mostrar_abiertas(abiertas, inicio=True)
+            mostrar_abiertas(abiertas, inicio=True, futuras=futuras)
         elif seccion == "Abiertas ahora":
             mostrar_abiertas(abiertas)
         elif seccion == "Online asincrónico":
@@ -350,7 +423,7 @@ st.markdown("""
 .radar-card h3{font-size:1.13rem;padding:4px 0;margin:3px 0}
 .radar-card p{margin:0 0 10px}
 .radar-badge{display:inline-block;border-radius:999px;padding:4px 9px;background:var(--urgencia);color:white;font-weight:700;margin:0 10px 4px 0}
-.radar-dates{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.radar-dates{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .radar-dates strong,.radar-dates small{display:block}
 [data-testid="stMetric"]{border:1px solid #bdcfcc;border-radius:12px;padding:12px}
 @media(max-width:740px){.radar-dates{grid-template-columns:repeat(2,minmax(0,1fr))}}
