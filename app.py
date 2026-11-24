@@ -27,7 +27,7 @@ def cargar(nombre):
 
 
 ZONA_CHILE = ZoneInfo("America/Santiago")
-RANGOS_RADAR = ["RADAR_EN_VIVO!A1:L", "RADAR_PROXIMAS!A1:M", "RADAR_PAC!A1:K"]
+RANGOS_RADAR = ["RADAR_EN_VIVO!A1:N", "RADAR_PROXIMAS!A1:M", "RADAR_PAC!A1:K"]
 
 
 @st.cache_data(ttl=60)
@@ -401,6 +401,30 @@ def etiqueta_modalidad(valor):
     }.get(normalizada, original)
 
 
+def evidencia_modalidad(compra, modalidad):
+    frase = str(compra.get("Evidencia modalidad") or "").strip()
+    fuente = str(compra.get("Fuente modalidad") or "").strip()
+    if frase:
+        breve = frase if len(frase) <= 180 else frase[:177].rsplit(" ", 1)[0] + "…"
+        return (fuente or "Evidencia registrada") + " · “" + breve + "”"
+
+    titulo = str(compra.get("Oportunidad") or "")
+    patrones = {
+        "Presencial": r"\bpresencial(?:es)?\b",
+        "Mixta": r"\b(?:mixt[ao]|h[ií]brid[ao]|semipresencial)\b",
+        "Online asincrónica": r"\basincr[oó]nic[ao]s?\b",
+        "Online sincrónica": r"\b(?:sincr[oó]nic[ao]s?|clases en vivo)\b",
+        "Online · tipo no identificado": r"\b(?:online|virtual|a distancia|en l[ií]nea)\b",
+    }
+    patron = patrones.get(modalidad)
+    coincidencia = re.search(patron, titulo, re.IGNORECASE) if patron else None
+    if coincidencia and not re.search(r"\b(?:no|sin|excepto|prohibid[ao])\b", normalizar_radar(titulo)):
+        return "En el título · “" + coincidencia.group() + "”"
+    if modalidad == "No identificada":
+        return "La captura no trae evidencia de modalidad. Revisa la descripción o las bases."
+    return "Clasificación del Radar · frase de respaldo no registrada."
+
+
 def mostrar_tarjeta(compra):
     nivel = compra["Semáforo"]
     color = {"🔴 Hasta 24 h": "#a62736", "🟠 Hasta 72 h": "#955900", "🟢 Vigente": "#176141"}.get(nivel, "#53676b")
@@ -410,7 +434,8 @@ def mostrar_tarjeta(compra):
 
     def dato(campo):
         return escape(str(compra.get(campo) or "Sin dato"))
-    modalidad = escape(etiqueta_modalidad(compra.get("Modalidad")))
+    modalidad = etiqueta_modalidad(compra.get("Modalidad"))
+    respaldo = escape(evidencia_modalidad(compra, modalidad))
     fechas = "".join(
         f"<div><small>{etiqueta}</small><strong>{dato(campo)}</strong></div>"
         for etiqueta, campo in [("Publicación", "Publicación"), ("Cierre · hora de Chile", "Cierre"),
@@ -422,7 +447,8 @@ def mostrar_tarjeta(compra):
             f'<span class="radar-badge">{escape(etiqueta_plazo)}</span>'
             f'<small>{dato("Código")} · {dato("Pertinencia")}</small>'
             f'<h3>{dato("Oportunidad")}</h3><p>{dato("Organismo")}</p>'
-            f'<div class="radar-dates"><div><small>Modalidad</small><strong>{modalidad}</strong></div>{fechas}</div></article>', unsafe_allow_html=True
+            f'<div class="radar-mode"><strong class="radar-mode-tag">Modalidad · {escape(modalidad)}</strong>'
+            f'<small>{respaldo}</small></div><div class="radar-dates">{fechas}</div></article>', unsafe_allow_html=True
         )
         if re.fullmatch(r"\d+-\d+-COT\d{2}", compra["Código"]):
             st.link_button("Ver ficha en Mercado Público",
@@ -699,7 +725,8 @@ st.markdown("""
 .radar-card h3{font-size:1.13rem;padding:4px 0;margin:3px 0}
 .radar-card p{margin:0 0 10px}
 .radar-badge{display:inline-block;border-radius:999px;padding:4px 9px;background:var(--urgencia);color:white;font-weight:700;margin:0 10px 4px 0}
-.radar-dates{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.radar-mode{margin:0 0 11px}.radar-mode small{display:block;margin-top:4px}.radar-mode-tag{display:inline-block;background:#e2f0ed;color:#124941;border-radius:999px;padding:4px 10px}
+.radar-dates{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .radar-dates strong,.radar-dates small{display:block}
 [data-testid="stMetric"]{border:1px solid #bdcfcc;border-radius:12px;padding:12px}
 @media(max-width:740px){.radar-dates{grid-template-columns:repeat(2,minmax(0,1fr))}}
