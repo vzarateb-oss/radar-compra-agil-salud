@@ -1,5 +1,7 @@
 from html import escape
 from math import ceil
+
+import altair as alt
 from datetime import datetime, timedelta
 import re
 import unicodedata
@@ -800,6 +802,57 @@ def mostrar_viabilidad():
     st.bar_chart(comparacion)
 
 
+NOMBRES_PROVEEDORES = {
+    "76199438-7": "Servicios de Capacitaciones Huellas OTEC SpA",
+    "77299863-5": "Sociedad de Capacitación TM Limitada",
+    "77443695-2": "Capacitación Easylit Limitada",
+    "76532024-0": "Quinta Capacitación SpA",
+    "77759526-1": "Centro de Capacitación Los Andes SpA",
+    "76935702-5": "Update Capacitación SpA",
+}
+
+
+def mostrar_competencia(datos):
+    base = datos.copy()
+    base["_rut"] = (base["RUT seleccionado observado"].astype(str)
+                    .str.replace(".", "", regex=False).str.strip().str.upper())
+    conocidos = base[base["_rut"].str.fullmatch(r"\d{7,8}-[0-9K]")]
+    st.subheader("Quiénes se seleccionan habitualmente")
+    st.caption("El ranking usa las compras que coinciden con los filtros del lateral.")
+    if conocidos.empty:
+        st.info("No hay proveedores seleccionados identificados en esta selección.")
+        return
+    ranking = conocidos.groupby("_rut")["Código"].nunique().sort_index().sort_values(ascending=False, kind="stable")
+    total = int(ranking.sum())
+    a, b, c = st.columns(3)
+    a.metric("Compras con selección identificada", f"{total} de {len(base)}")
+    b.metric("Proveedores identificados", len(ranking))
+    c.metric("Participación de los cinco primeros", f"{ranking.head(5).sum() / total:.1%}")
+    def nombre(rut):
+        return NOMBRES_PROVEEDORES.get(rut, f"RUT {rut} · nombre por verificar")
+    top = ranking.head(10).rename(index=nombre).rename("Selecciones observadas")
+    grafico = top.rename_axis("Proveedor").reset_index()
+    st.altair_chart(alt.Chart(grafico).mark_bar(color="#188779").encode(
+        x=alt.X("Selecciones observadas:Q"),
+        y=alt.Y("Proveedor:N", sort="-x"),
+        tooltip=["Proveedor", "Selecciones observadas"],
+    ), use_container_width=True)
+    st.caption("Participación sobre las selecciones identificadas. La base no permite calcular la tasa "
+               "de éxito de cada proveedor sin conocer todas sus postulaciones.")
+    proveedor = st.selectbox("Ver trayectoria de un proveedor", ranking.index.tolist(), format_func=nombre)
+    historial = conocidos[conocidos["_rut"].eq(proveedor)]
+    a, b = st.columns(2)
+    a.metric("Selecciones observadas", int(ranking.loc[proveedor]))
+    b.metric("Compradores distintos", historial.loc[historial["Organismo"].ne(""), "Organismo"].nunique())
+    barras_historicas(historial, "Organismo", "Compradores del proveedor", limite=8)
+    with st.expander("Ver compras, temas y modalidad"):
+        columnas = ["Código", "Trimestre", "Oportunidad", "Organismo", "Área", "Submodalidad"]
+        st.dataframe(historial[columnas].sort_values("Trimestre", ascending=False),
+                     hide_index=True, use_container_width=True)
+    st.caption("Proveedor seleccionado observado. La orden, el pago y la acreditación OTEC vigente "
+               "requieren verificación propia.")
+
+
 def mostrar_mercado_historico():
     vista = st.sidebar.radio("Vista histórica", ["Panorama", "Compras y modalidades", "Compradores y competidores",
                                                     "Precios y comparables", "Archivo de la captura inicial"])
@@ -860,8 +913,8 @@ def mostrar_mercado_historico():
         with izquierda:
             barras_historicas(seleccion, "Organismo", "Compradores con más actividad")
         with derecha:
-            barras_historicas(seleccion, "RUT seleccionado observado", "Proveedores seleccionados observados")
-            st.caption("Se cuenta la selección observada. La emisión de orden y el pago requieren su propia evidencia.")
+            st.caption("Consulta el ranking y la trayectoria por proveedor debajo.")
+        mostrar_competencia(seleccion)
     else:
         mostrar_referencias(seleccion, area, modalidad)
 
