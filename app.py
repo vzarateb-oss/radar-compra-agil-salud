@@ -359,16 +359,6 @@ def filtros_area_formato(datos):
     return datos if modalidad == "Todos" else datos[datos["_formato"].eq(modalidad)]
 
 
-def mostrar_cierres(datos):
-    cierres = datos[datos["Semáforo"].isin(NIVELES_VIGENTES)].copy()
-    if cierres.empty:
-        return
-    fechas = cierres["_cierre"].dt.strftime("%d/%m")
-    conteos = fechas.value_counts(sort=False).rename_axis("Día de cierre").rename("Compras")
-    st.markdown("#### Cierres por día")
-    st.bar_chart(conteos, color="#188779")
-
-
 def resumen_futuro(datos, mostrar_temas=False):
     estimadas = datos[datos["Ventana estimada"].str.fullmatch(r"\d{4}-Q[1-4]")]
     if estimadas.empty:
@@ -529,7 +519,6 @@ def mostrar_abiertas(filas, asincronicas=False, inicio=False, futuras=None):
         if inicio and futuras is not None:
             st.markdown("#### Qué preparar")
             resumen_futuro(tabla_radar(futuras))
-    mostrar_cierres(datos)
     if datos.empty:
         st.info("La captura disponible no tiene compras que coincidan con estos filtros.")
         return
