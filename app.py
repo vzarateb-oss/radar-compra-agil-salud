@@ -1,4 +1,5 @@
 from html import escape
+from math import ceil
 from datetime import datetime, timedelta
 import re
 import unicodedata
@@ -438,6 +439,7 @@ def mostrar_tarjeta(compra):
         return escape(str(compra.get(campo) or "Sin dato"))
     modalidad = etiqueta_modalidad(compra.get("Modalidad"))
     respaldo = escape(evidencia_modalidad(compra, modalidad))
+    decision = "Monitorear" if nivel == "⚪ Cerrada por plazo" else "Verificar requisitos"
     fechas = "".join(
         f"<div><small>{etiqueta}</small><strong>{dato(campo)}</strong></div>"
         for etiqueta, campo in [("Publicación", "Publicación"), ("Cierre · hora de Chile", "Cierre"),
@@ -447,6 +449,7 @@ def mostrar_tarjeta(compra):
         st.markdown(
             f'<article class="radar-card" style="--urgencia:{color}">'
             f'<span class="radar-badge">{escape(etiqueta_plazo)}</span>'
+            f'<span class="radar-mode-tag">{decision}</span> '
             f'<small>{dato("Código")} · {dato("Pertinencia")}</small>'
             f'<h3>{dato("Oportunidad")}</h3><p>{dato("Organismo")}</p>'
             f'<div class="radar-mode"><strong class="radar-mode-tag">Modalidad · {escape(modalidad)}</strong>'
@@ -666,6 +669,108 @@ def mostrar_referencias(datos, area, modalidad):
         st.caption("Muestra pequeña. Se muestran las referencias individuales.")
     st.dataframe(comparables[["Código", "Oportunidad", "Trimestre", "Organismo", "Referencia CLP",
                               "Referencia conservadora"]], hide_index=True, use_container_width=True)
+
+
+def calcular_meta(meta, contrato, margen_pct, conversion_pct):
+    margen = margen_pct / 100
+    conversion = conversion_pct / 100
+    facturacion = meta / margen
+    ganancias_por_contrato = contrato * margen
+    contratos = ceil(meta / ganancias_por_contrato)
+    postulaciones = ceil(contratos / conversion)
+    return facturacion, contratos, postulaciones
+
+
+def clp_viabilidad(valor):
+    return "$" + f"{valor:,.0f}".replace(",", ".")
+
+
+def muestra_viabilidad(datos, foco):
+    periodos = ["2025Q4", "2026Q1", "2026Q2", "2026Q3"]
+    seleccion = datos[datos["Trimestre"].isin(periodos)].copy()
+    seleccion["_focos"] = [focos_compra({"Oportunidad": r["Oportunidad"], "Área": r["Área"],
+                                         "Códigos de evidencia": r["Código"]})
+                            for r in seleccion.to_dict("records")]
+    if foco == "Ambos focos":
+        return seleccion[seleccion["_focos"].map(lambda focos: bool(focos)).astype(bool)]
+    return filtrar_foco(seleccion, foco)
+
+
+def mostrar_viabilidad():
+    st.subheader("Viabilidad comercial")
+    st.caption("Compara cuántas ventas y postulaciones exige tu meta con la actividad observada.")
+    rubro = st.radio("Negocio", ["Capacitación en salud", "Insumos sanitarios", "Fármacos"], horizontal=True)
+    if rubro != "Capacitación en salud":
+        st.info("Escenario editable. El Radar actual es una base de capacitación y aún no mide compradores, "
+                "volumen contratado ni competencia de este rubro.")
+    c1, c2 = st.columns(2)
+    meta = c1.number_input("Meta de ganancia neta mensual · CLP", min_value=100_000,
+                           value=10_000_000, step=100_000)
+    monto = c2.number_input("Ingreso medio por contrato ejecutado · CLP sin IVA", min_value=50_000,
+                            value=2_500_000, step=50_000, key=f"monto-{rubro}")
+    c3, c4 = st.columns(2)
+    margen = c3.number_input("Margen neto supuesto · %", min_value=1.0, max_value=100.0,
+                             value=25.0, step=1.0, key=f"margen-{rubro}",
+                             help="Ingresa el margen después de costos directos, gastos fijos e impuestos.")
+    conversion = c4.number_input("Adjudicaciones por cada 100 ofertas propias", min_value=1.0, max_value=100.0,
+                                 value=20.0, step=1.0, key=f"conversion-{rubro}")
+    facturacion, contratos, postulaciones = calcular_meta(meta, monto, margen, conversion)
+    a, b, c = st.columns(3)
+    a.metric("Facturación mensual necesaria", clp_viabilidad(facturacion))
+    b.metric("Contratos ganados y ejecutados al mes", contratos)
+    c.metric("Postulaciones elegibles al mes", postulaciones)
+    st.caption("Supuestos de simulación. Las postulaciones requeridas son un promedio esperado "
+               "según la tasa ingresada. El cálculo no estima flujo de caja.")
+    if rubro != "Capacitación en salud":
+        with st.expander("Qué falta medir para comparar este rubro"):
+            st.write("Compras y órdenes trazables por categoría de producto, precios por unidad comparable, "
+                     "margen después de logística, capital de trabajo y requisitos exigidos en cada ficha.")
+            st.link_button("Datos Abiertos de ChileCompra", "https://datos-abiertos.chilecompra.cl/descargas")
+        return
+
+    st.markdown("### Demanda observada en capacitación")
+    st.caption("Octubre de 2025 a septiembre de 2026 · cuatro trimestres completos de la Beta 9.3.")
+    izquierda, derecha = st.columns(2)
+    foco = izquierda.selectbox("Área prioritaria", ["Ambos focos", *FOCOS])
+    alcance = derecha.selectbox("Modalidades del escenario", [
+        "Solo online asincrónica explícita", "Todas las modalidades registradas",
+    ])
+    try:
+        datos = muestra_viabilidad(cargar_mercado_historico(), foco)
+    except Exception:
+        st.warning("No se pudo leer el histórico. Los resultados del simulador siguen disponibles.")
+        return
+
+    asincronicas = datos[datos["Asincronía explícita"].eq(True)]
+    seleccion = asincronicas if alcance == "Solo online asincrónica explícita" else datos
+    conteo = len(seleccion)
+    promedio = conteo / 12
+    acreditadas = seleccion["Organismo"].replace("", pd.NA).nunique()
+    a, b, c = st.columns(3)
+    a.metric("Procesos observados en 12 meses", conteo)
+    b.metric("Procesos observados por mes", f"{promedio:.1f}".replace(".", ","))
+    c.metric("Compradores observados", acreditadas)
+    if promedio < postulaciones:
+        st.warning(
+            f"La base registra {promedio:.1f} procesos al mes para este segmento, frente a "
+            f"{postulaciones} postulaciones elegibles que exige el escenario. "
+            "Con este volumen observado, la meta no queda respaldada, incluso contando cada proceso como postulable."
+        )
+    else:
+        st.info(
+            f"La base registra {promedio:.1f} procesos al mes frente a {postulaciones} postulaciones necesarias. "
+            "El volumen justifica revisar elegibilidad, competencia y capacidad de ejecución antes de estimar ganancias."
+        )
+    techo_escenario = promedio * (conversion / 100) * monto * (margen / 100)
+    st.metric("Utilidad mensual del escenario si todos fueran postulables", clp_viabilidad(techo_escenario))
+    st.caption("Son procesos detectados en el histórico. Todavía falta verificar requisitos, duplicados por "
+               "republicación, órdenes de compra y cuántos procesos serían realmente postulables.")
+    comparacion = pd.DataFrame({
+        "Oferta ampliada · todos los formatos": datos["Trimestre"].value_counts(),
+        "Asincronía explícita": asincronicas["Trimestre"].value_counts(),
+    }).reindex(["2025Q4", "2026Q1", "2026Q2", "2026Q3"]).fillna(0).astype(int)
+    st.markdown("#### Cuánto volumen añade ampliar modalidades")
+    st.bar_chart(comparacion)
 
 
 def mostrar_mercado_historico():
@@ -896,7 +1001,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 seccion = st.radio(
     "Secciones del Radar",
-    ["Inicio", "Oportunidades", "Próximas oportunidades", "Mercado histórico", "Plan Anual de Compras"],
+    ["Inicio", "Oportunidades", "Próximas oportunidades", "Mercado histórico", "Plan Anual de Compras", "Viabilidad comercial"],
     horizontal=True, key="radar_navegacion", label_visibility="collapsed",
 )
 if seccion == "Oportunidades":
@@ -910,5 +1015,7 @@ if seccion in {"Oportunidades", "Próximas oportunidades"}:
     st.sidebar.selectbox("Formato", ["Todos", *MODALIDADES], key="radar_formato")
 if seccion == "Mercado histórico":
     mostrar_mercado_historico()
+elif seccion == "Viabilidad comercial":
+    mostrar_viabilidad()
 else:
     mostrar_radar(seccion)
