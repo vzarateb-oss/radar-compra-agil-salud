@@ -1002,9 +1002,69 @@ def mostrar_piloto_competencia():
         st.dataframe(vinculadas, hide_index=True)
 
 
+@st.cache_data(ttl=300)
+def cargar_competencia_completa():
+    rangos = leer_rangos_radar(["RADAR_COMP_MENSUAL!A1:G", "RADAR_COMP_OC_HIST!A1:H"])
+    return [pd.DataFrame([(fila + [""] * len(filas[0]))[:len(filas[0])] for fila in filas[1:]],
+                         columns=filas[0]) for filas in rangos]
+
+
+def mostrar_competencia_completa():
+    datos, ordenes = cargar_competencia_completa()
+    campos = ["Seleccionadas", "No seleccionadas", "Por verificar", "Referencias OC"]
+    datos[campos] = datos[campos].apply(pd.to_numeric, errors="raise")
+    datos["Año"] = datos["Mes publicación"].str[:4]
+    st.caption("Histórico sanitario · enero de 2024 a octubre de 2026 · cohortes por fecha de publicación.")
+    st.caption("4.504 compras cruzadas en 34 meses. El año 2026 incluye enero a octubre.")
+    anos = sorted(datos["Año"].unique(), reverse=True)
+    ano = st.selectbox("Año de publicación de la compra", ["Todos", *anos])
+    muestra = datos if ano == "Todos" else datos[datos["Año"].eq(ano)]
+    anual = muestra.groupby("RUT proveedor")[campos].sum()
+    anual["Postulaciones"] = anual[campos[:3]].sum(axis=1)
+    resueltas = anual["Seleccionadas"] + anual["No seleccionadas"]
+    anual["Tasa de selección observada"] = anual["Seleccionadas"] / resueltas.where(resueltas.gt(0))
+    nombres = muestra.loc[muestra["Proveedor"].ne("")].drop_duplicates("RUT proveedor").set_index("RUT proveedor")["Proveedor"]
+    anual["Proveedor"] = [nombres.get(rut, nombre_proveedor(rut)) for rut in anual.index]
+    anual = anual.sort_values(["Seleccionadas", "Postulaciones"], ascending=False)
+    a, b, c = st.columns(3)
+    a.metric("Postulaciones", int(anual["Postulaciones"].sum()))
+    b.metric("Selecciones", int(anual["Seleccionadas"].sum()))
+    c.metric("Resultados por verificar", int(anual["Por verificar"].sum()))
+    if anual.empty:
+        return
+    st.dataframe(anual[["Proveedor", "Postulaciones", *campos[:3], "Tasa de selección observada"]].head(25),
+                 column_config={"Tasa de selección observada": st.column_config.NumberColumn(format="percent")})
+    st.caption("Una postulación por código de compra y RUT. La tasa usa selecciones sobre postulaciones con resultado conocido.")
+    rut = st.selectbox("Proveedor · detalle anual y mensual", anual.index.tolist(),
+                       format_func=lambda r: nombres.get(r, nombre_proveedor(r)))
+    detalle = datos.loc[datos["RUT proveedor"].eq(rut)].groupby("Año")[campos].sum()
+    detalle["Postulaciones"] = detalle[campos[:3]].sum(axis=1)
+    resueltas = detalle["Seleccionadas"] + detalle["No seleccionadas"]
+    detalle["Tasa de selección observada"] = detalle["Seleccionadas"] / resueltas.where(resueltas.gt(0))
+    st.dataframe(detalle[["Postulaciones", *campos[:3], "Tasa de selección observada"]],
+                 column_config={"Tasa de selección observada": st.column_config.NumberColumn(format="percent")})
+    st.markdown("#### Monto mensual con orden verificada")
+    vinculadas = ordenes[ordenes["RUT proveedor"].eq(rut)]
+    verificadas = vinculadas[vinculadas["Verificación"].eq("Verificada")].rename(columns={"Código OC": "Codigo publico OC"})
+    mensual = resumen_ordenes(verificadas, rut)
+    if mensual.empty:
+        st.info(f"Sin monto mensual verificable. Este proveedor tiene {len(vinculadas)} vínculos históricos a una OC.")
+    else:
+        st.caption("Montos en CLP por mes de emisión de la orden.")
+        st.dataframe(mensual)
+    with st.expander("Ver órdenes vinculadas"):
+        st.dataframe(vinculadas, hide_index=True)
+
+
 def mostrar_resultados_competencia():
     st.subheader("Postulaciones y órdenes de compra")
-    fuente = st.radio("Fuente", ["Piloto histórico", "Seguimiento operativo"], horizontal=True)
+    fuente = st.radio("Fuente", ["Histórico completo", "Piloto histórico", "Seguimiento operativo"], horizontal=True)
+    if fuente == "Histórico completo":
+        try:
+            mostrar_competencia_completa()
+        except Exception:
+            st.warning("No se pudo cargar el histórico completo de competencia.")
+        return
     if fuente == "Piloto histórico":
         try:
             mostrar_piloto_competencia()
