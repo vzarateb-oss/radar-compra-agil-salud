@@ -959,8 +959,58 @@ def resumen_ordenes(adjudicaciones, rut):
     )
 
 
+
+@st.cache_data(ttl=300)
+def cargar_piloto_competencia():
+    rangos = leer_rangos_radar(["RADAR_COMP_POSTULACIONES!A1:E", "RADAR_COMP_OC!A1:H"])
+    return [pd.DataFrame([fila + [""] * (len(filas[0]) - len(fila)) for fila in filas[1:]],
+                         columns=filas[0]) for filas in rangos]
+
+
+def mostrar_piloto_competencia():
+    postulaciones, ordenes = cargar_piloto_competencia()
+    st.caption("Piloto histórico · septiembre y octubre de 2026 · año de publicación de la compra")
+    a, b, c = st.columns(3)
+    a.metric("Compras sanitarias cruzadas", postulaciones["Código"].nunique())
+    b.metric("Postulaciones por compra y proveedor", len(postulaciones))
+    c.metric("Referencias de orden de compra", len(ordenes))
+    proveedores = (postulaciones.loc[postulaciones["Proveedor"].ne(""), ["RUT proveedor", "Proveedor"]]
+                   .drop_duplicates("RUT proveedor").set_index("RUT proveedor")["Proveedor"].to_dict())
+    tabla = (postulaciones.groupby(["RUT proveedor", "Resultado observado"]).size().unstack(fill_value=0)
+             .reindex(columns=["Seleccionado", "No seleccionado", "Por verificar"], fill_value=0))
+    tabla["Postulaciones"] = tabla.sum(axis=1)
+    conocidos = tabla["Seleccionado"] + tabla["No seleccionado"]
+    tabla["Tasa observada"] = tabla["Seleccionado"] / conocidos.where(conocidos.gt(0))
+    tabla["Proveedor"] = [proveedores.get(rut, nombre_proveedor(rut)) for rut in tabla.index]
+    tabla = tabla.sort_values(["Seleccionado", "Postulaciones"], ascending=False)
+    columnas = ["Proveedor", "Postulaciones", "Seleccionado", "No seleccionado", "Por verificar", "Tasa observada"]
+    st.dataframe(tabla[columnas].head(25), column_config={"Tasa observada": st.column_config.NumberColumn(format="percent")})
+    st.caption("Tasa observada = selecciones divididas por postulaciones con resultado conocido en los dos meses.")
+    rut = st.selectbox("Ver evidencia por proveedor", tabla.index.tolist(),
+                       format_func=lambda r: proveedores.get(r, nombre_proveedor(r)))
+    with st.expander("Postulaciones de respaldo"):
+        st.dataframe(postulaciones[postulaciones["RUT proveedor"].eq(rut)], hide_index=True)
+    st.markdown("#### Monto mensual con orden verificada")
+    vinculadas = ordenes[ordenes["RUT proveedor"].eq(rut)]
+    verificadas = vinculadas[vinculadas["Verificación"].eq("Verificada")].rename(columns={"Código OC": "Codigo publico OC"})
+    mensual = resumen_ordenes(verificadas, rut)
+    if mensual.empty:
+        st.info(f"Sin monto mensual verificable. Hay {len(vinculadas)} referencias de OC para este proveedor.")
+    else:
+        st.dataframe(mensual)
+    with st.expander("Órdenes vinculadas y estado de verificación"):
+        st.dataframe(vinculadas, hide_index=True)
+
+
 def mostrar_resultados_competencia():
     st.subheader("Postulaciones y órdenes de compra")
+    fuente = st.radio("Fuente", ["Piloto histórico", "Seguimiento operativo"], horizontal=True)
+    if fuente == "Piloto histórico":
+        try:
+            mostrar_piloto_competencia()
+        except Exception:
+            st.warning("No se pudo cargar el piloto histórico de competencia.")
+        return
     try:
         ofertas, adjudicaciones = cargar_evidencia_competencia()
     except Exception:
