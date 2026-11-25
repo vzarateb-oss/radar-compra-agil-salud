@@ -809,48 +809,97 @@ NOMBRES_PROVEEDORES = {
     "76532024-0": "Quinta Capacitación SpA",
     "77759526-1": "Centro de Capacitación Los Andes SpA",
     "76935702-5": "Update Capacitación SpA",
+    "77272265-6": "Sociedad Capacitadora Ademy SpA",
+    "77867145-K": "EducaPlus Academia SpA",
 }
 
 
-def mostrar_competencia(datos):
-    base = datos.copy()
+def ranking_competencia(datos):
+    base = datos.drop_duplicates("Código").copy()
     base["_rut"] = (base["RUT seleccionado observado"].astype(str)
                     .str.replace(".", "", regex=False).str.strip().str.upper())
     conocidos = base[base["_rut"].str.fullmatch(r"\d{7,8}-[0-9K]")]
-    st.subheader("Quiénes se seleccionan habitualmente")
-    st.caption("El ranking usa las compras que coinciden con los filtros del lateral.")
-    if conocidos.empty:
-        st.info("No hay proveedores seleccionados identificados en esta selección.")
-        return
     ranking = conocidos.groupby("_rut")["Código"].nunique().sort_index().sort_values(ascending=False, kind="stable")
-    total = int(ranking.sum())
-    a, b, c = st.columns(3)
-    a.metric("Compras con selección identificada", f"{total} de {len(base)}")
-    b.metric("Proveedores identificados", len(ranking))
-    c.metric("Participación de los cinco primeros", f"{ranking.head(5).sum() / total:.1%}")
-    def nombre(rut):
-        return NOMBRES_PROVEEDORES.get(rut, f"RUT {rut} · nombre por verificar")
-    top = ranking.head(10).rename(index=nombre).rename("Selecciones observadas")
-    grafico = top.rename_axis("Proveedor").reset_index()
+    return base, conocidos, ranking
+
+
+def nombre_proveedor(rut):
+    return NOMBRES_PROVEEDORES.get(rut, f"RUT {rut} · nombre por verificar")
+
+
+def mostrar_competencia(datos):
+    st.subheader("Quiénes se seleccionan habitualmente")
+    st.caption("Aplica los filtros del lateral para comparar dentro de tu mercado objetivo.")
+    segmento = st.radio("Segmento", ["Todas las compras filtradas", "Online asincrónico explícito"],
+                        horizontal=True)
+    if segmento == "Online asincrónico explícito":
+        datos = datos[datos["Asincronía explícita"].eq(True)]
+    compradores = sorted(set(datos["Organismo"]) - {""})
+    comprador = st.selectbox("Comprador", ["", *compradores], format_func=lambda valor: valor or "Todos")
+    if comprador:
+        datos = datos[datos["Organismo"].eq(comprador)]
+    base, conocidos, ranking = ranking_competencia(datos)
+    if ranking.empty:
+        st.info(f"Se encontraron {len(base)} compras y ninguna tiene un proveedor seleccionado identificado.")
+        return
+    total = len(conocidos)
+    top5 = int(ranking.head(5).sum())
+    a, b, c, d = st.columns(4)
+    a.metric("Cobertura de selección", f"{total / len(base):.1%}")
+    b.metric("Compras sin selección identificada", len(base) - total)
+    c.metric("Proveedores identificados", len(ranking))
+    d.metric("Cuota de los cinco primeros", f"{top5 / total:.1%}" if len(ranking) >= 5 else "—")
+    lideres = ranking[ranking.eq(ranking.iloc[0])]
+    nombres = ", ".join(nombre_proveedor(rut) for rut in lideres.index[:3])
+    adicionales = len(lideres) - 3
+    if adicionales > 0:
+        nombres += f" y {adicionales} más"
+    with st.container(border=True):
+        st.markdown("#### Lectura competitiva")
+        st.write(
+            f"{'Lideran' if len(lideres) > 1 else 'Lidera'} {nombres} con {ranking.iloc[0]} "
+            f"selecciones por proveedor. La comparación se basa en {total} de {len(base)} compras visibles."
+        )
+        st.write(
+            f"Los cinco primeros concentran {top5} de {total} selecciones identificadas ({top5 / total:.1%})."
+            if len(ranking) >= 5 else "Hay menos de cinco proveedores identificados en este segmento."
+        )
+    grafico = ranking.head(10).rename(index=nombre_proveedor).rename("Selecciones observadas").rename_axis("Proveedor").reset_index()
+    grafico["Cuota"] = grafico["Selecciones observadas"] / total
     st.altair_chart(alt.Chart(grafico).mark_bar(color="#188779").encode(
         x=alt.X("Selecciones observadas:Q"),
         y=alt.Y("Proveedor:N", sort="-x"),
-        tooltip=["Proveedor", "Selecciones observadas"],
+        tooltip=["Proveedor", "Selecciones observadas", alt.Tooltip("Cuota:Q", format=".1%")],
     ), use_container_width=True)
-    st.caption("Participación sobre las selecciones identificadas. La base no permite calcular la tasa "
-               "de éxito de cada proveedor sin conocer todas sus postulaciones.")
-    proveedor = st.selectbox("Ver trayectoria de un proveedor", ranking.index.tolist(), format_func=nombre)
+
+    proveedor = st.selectbox("Ver trayectoria de un proveedor", ranking.index.tolist(), format_func=nombre_proveedor)
     historial = conocidos[conocidos["_rut"].eq(proveedor)]
-    a, b = st.columns(2)
+    grupos = (conocidos[conocidos["Organismo"].ne("")].groupby("Organismo")["Código"].nunique()
+              .rename("Selecciones identificadas del comprador"))
+    propios = historial[historial["Organismo"].ne("")].groupby("Organismo")["Código"].nunique()
+    recurrencia = propios.rename("Selecciones del proveedor").to_frame().join(grupos)
+    recurrencia["Cuota observada"] = (
+        recurrencia["Selecciones del proveedor"] / recurrencia["Selecciones identificadas del comprador"]
+    )
+    a, b, c = st.columns(3)
     a.metric("Selecciones observadas", int(ranking.loc[proveedor]))
-    b.metric("Compradores distintos", historial.loc[historial["Organismo"].ne(""), "Organismo"].nunique())
-    barras_historicas(historial, "Organismo", "Compradores del proveedor", limite=8)
-    with st.expander("Ver compras, temas y modalidad"):
+    b.metric("Compradores distintos", len(recurrencia))
+    c.metric("Compradores que lo repiten", int(recurrencia["Selecciones del proveedor"].ge(2).sum()))
+    izquierda, derecha = st.columns(2)
+    with izquierda:
+        barras_historicas(historial, "Organismo", "Compradores del proveedor", limite=8)
+    with derecha:
+        barras_historicas(historial, "Submodalidad", "Modalidades en las que fue seleccionado", limite=8)
+    with st.expander("Ver recurrencia por comprador y compras de respaldo"):
+        st.dataframe(recurrencia.sort_values("Selecciones del proveedor", ascending=False),
+                     use_container_width=True, column_config={
+                         "Cuota observada": st.column_config.NumberColumn(format="percent")
+                     })
         columnas = ["Código", "Trimestre", "Oportunidad", "Organismo", "Área", "Submodalidad"]
         st.dataframe(historial[columnas].sort_values("Trimestre", ascending=False),
                      hide_index=True, use_container_width=True)
-    st.caption("Proveedor seleccionado observado. La orden, el pago y la acreditación OTEC vigente "
-               "requieren verificación propia.")
+    st.caption("Cuota sobre selecciones identificadas, no tasa de éxito por postulaciones. "
+               "Orden, pago y acreditación OTEC vigente requieren verificación propia.")
 
 
 def mostrar_mercado_historico():
