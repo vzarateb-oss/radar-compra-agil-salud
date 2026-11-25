@@ -696,6 +696,53 @@ def muestra_viabilidad(datos, foco):
     return filtrar_foco(seleccion, foco)
 
 
+META_MENSUAL_RADAR = 10_000_000
+TICKET_ESCENARIO_RADAR = 2_500_000
+MARGEN_ESCENARIO_RADAR = 25.0
+CONVERSION_ESCENARIO_RADAR = 20.0
+
+
+def abrir_viabilidad():
+    st.session_state["radar_navegacion"] = "Viabilidad comercial"
+
+
+def mostrar_decision_inicio():
+    st.subheader("¿Qué negocio puede sostener tu meta?")
+    st.caption("Meta de referencia: $10 millones netos al mes")
+    _, contratos, postulaciones = calcular_meta(
+        META_MENSUAL_RADAR, TICKET_ESCENARIO_RADAR, MARGEN_ESCENARIO_RADAR, CONVERSION_ESCENARIO_RADAR
+    )
+    st.write(f"Con $2,5 millones por contrato, 25% de margen neto y 20% de adjudicación, "
+             f"la meta exige {contratos} contratos ejecutados y unas {postulaciones} postulaciones elegibles al mes.")
+    capacitacion, insumos, farmacos = st.columns(3)
+    with capacitacion.container(border=True):
+        st.markdown("#### Capacitación en salud")
+        try:
+            datos = muestra_viabilidad(cargar_mercado_historico(), "Ambos focos")
+        except Exception:
+            st.caption("Histórico no disponible en esta consulta.")
+        else:
+            promedio = len(datos) / 12
+            asincronicas = int(datos["Asincronía explícita"].eq(True).sum())
+            st.metric("Procesos observados al mes", f"{promedio:.1f}".replace(".", ","))
+            st.caption(f"{asincronicas} con asincronía explícita en 12 meses · oct. 2025 a sept. 2026.")
+            if promedio < postulaciones:
+                st.write("El volumen observado queda por debajo de lo que exige el escenario.")
+            else:
+                st.write("El volumen permite estudiar el escenario. Falta verificar elegibilidad y capacidad.")
+    with insumos.container(border=True):
+        st.markdown("#### Insumos sanitarios")
+        st.write("Mercado accesible por medir.")
+        st.caption("Compra repetida por producto, precio por unidad, margen después de despacho y capital de trabajo.")
+    with farmacos.container(border=True):
+        st.markdown("#### Fármacos")
+        st.write("Mercado accesible por medir.")
+        st.caption("Volumen por producto y requisitos sanitarios aplicables al modelo de distribución.")
+    if st.button("Abrir simulador y comparar modalidades", type="primary", on_click=abrir_viabilidad):
+        st.rerun()
+    st.divider()
+
+
 def mostrar_viabilidad():
     st.subheader("Viabilidad comercial")
     st.caption("Compara cuántas ventas y postulaciones exige tu meta con la actividad observada.")
@@ -705,15 +752,15 @@ def mostrar_viabilidad():
                 "volumen contratado ni competencia de este rubro.")
     c1, c2 = st.columns(2)
     meta = c1.number_input("Meta de ganancia neta mensual · CLP", min_value=100_000,
-                           value=10_000_000, step=100_000)
+                           value=META_MENSUAL_RADAR, step=100_000)
     monto = c2.number_input("Ingreso medio por contrato ejecutado · CLP sin IVA", min_value=50_000,
-                            value=2_500_000, step=50_000, key=f"monto-{rubro}")
+                            value=TICKET_ESCENARIO_RADAR, step=50_000, key=f"monto-{rubro}")
     c3, c4 = st.columns(2)
     margen = c3.number_input("Margen neto supuesto · %", min_value=1.0, max_value=100.0,
-                             value=25.0, step=1.0, key=f"margen-{rubro}",
+                             value=MARGEN_ESCENARIO_RADAR, step=1.0, key=f"margen-{rubro}",
                              help="Ingresa el margen después de costos directos, gastos fijos e impuestos.")
     conversion = c4.number_input("Adjudicaciones por cada 100 ofertas propias", min_value=1.0, max_value=100.0,
-                                 value=20.0, step=1.0, key=f"conversion-{rubro}")
+                                 value=CONVERSION_ESCENARIO_RADAR, step=1.0, key=f"conversion-{rubro}")
     facturacion, contratos, postulaciones = calcular_meta(meta, monto, margen, conversion)
     a, b, c = st.columns(3)
     a.metric("Facturación mensual necesaria", clp_viabilidad(facturacion))
@@ -963,6 +1010,8 @@ def mostrar_base_inicial():
 
 @st.fragment(run_every="60s")
 def mostrar_radar(seccion):
+    if seccion == "Inicio":
+        mostrar_decision_inicio()
     if st.button("Actualizar vista"):
         cargar_radar_privado.clear()
     try:
