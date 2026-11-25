@@ -902,7 +902,107 @@ def mostrar_competencia(datos):
                "Orden, pago y acreditación OTEC vigente requieren verificación propia.")
 
 
+
+@st.cache_data(ttl=300)
+def cargar_evidencia_competencia():
+    rangos = leer_rangos_radar(["RADAR_HISTORIAL_OFERTAS!A1:Z", "RADAR_ADJUDICACIONES!A1:AZ"])
+    tablas = []
+    for filas in rangos:
+        if not filas:
+            raise ValueError("Fuente de competencia sin encabezado")
+        encabezados = filas[0]
+        tablas.append(pd.DataFrame([(fila + [""] * len(encabezados))[:len(encabezados)]
+                                    for fila in filas[1:]], columns=encabezados))
+    return tablas
+
+
+def rut_competencia(serie):
+    return serie.astype(str).str.replace(".", "", regex=False).str.strip().str.upper()
+
+
+def resumen_postulaciones(ofertas, rut):
+    datos = ofertas.loc[rut_competencia(ofertas["RUT proveedor"]).eq(rut)].copy()
+    datos = datos[datos["Codigo Compra Agil"].ne("")]
+    fechas = pd.to_datetime(datos["Fecha cotizacion"], format="ISO8601", errors="coerce", utc=True)
+    datos["Año"] = fechas.dt.tz_convert(ZONA_CHILE).dt.year
+    datos["Código"] = datos["Codigo Compra Agil"]
+    datos["Selección observada"] = datos["Proveedor seleccionado"].map(normalizar_radar).eq("si")
+    procesos = datos.dropna(subset=["Año"]).groupby(["Año", "Código"], as_index=False)["Selección observada"].max()
+    return procesos.groupby("Año").agg(
+        Postulaciones=("Código", "size"), Selecciones=("Selección observada", "sum")
+    )
+
+
+def resumen_ordenes(adjudicaciones, rut):
+    columnas = {"Codigo publico OC", "RUT proveedor", "Monto OC", "Moneda", "Fecha emisión OC", "Estado OC"}
+    if not columnas.issubset(adjudicaciones):
+        return pd.DataFrame()
+    datos = adjudicaciones.loc[rut_competencia(adjudicaciones["RUT proveedor"]).eq(rut)].copy()
+    datos["Código OC"] = datos["Codigo publico OC"].str.strip().str.upper()
+    estados = datos["Estado OC"].map(normalizar_radar)
+    datos = datos[
+        datos["Código OC"].str.fullmatch(r"\d+-\d+-[A-Z]{2}\d{2}")
+        & datos["Moneda"].str.strip().str.upper().eq("CLP")
+        & estados.isin({"aceptada", "recepcion conforme", "recepcion conforme incompleta"})
+    ].copy()
+    montos = datos["Monto OC"].str.strip().str.replace(r"^\$\s*", "", regex=True)
+    datos["Monto CLP"] = pd.to_numeric(montos.str.replace(r"(?<=\d)[.,](?=\d{3}(?:[.,]|$))", "", regex=True), errors="coerce")
+    datos["Emisión"] = pd.to_datetime(datos["Fecha emisión OC"], format="mixed", dayfirst=True, errors="coerce")
+    datos = datos.dropna(subset=["Emisión", "Monto CLP"])
+    datos = datos[datos["Monto CLP"].gt(0)]
+    consistentes = datos.groupby("Código OC")[["Emisión", "Monto CLP"]].transform("nunique").eq(1).all(axis=1)
+    datos = datos[consistentes].drop_duplicates("Código OC")
+    datos["Mes de emisión"] = datos["Emisión"].dt.strftime("%Y-%m")
+    return datos.groupby("Mes de emisión").agg(
+        Órdenes=("Código OC", "size"),
+        **{"Monto OC CLP": ("Monto CLP", "sum")},
+    )
+
+
+def mostrar_resultados_competencia():
+    st.subheader("Postulaciones y órdenes de compra")
+    try:
+        ofertas, adjudicaciones = cargar_evidencia_competencia()
+    except Exception:
+        st.warning("No se pudieron leer las fuentes de postulaciones y órdenes de compra.")
+        return
+    proveedores = {}
+    for fila in ofertas.to_dict("records"):
+        rut = str(fila.get("RUT proveedor", "")).replace(".", "").strip().upper()
+        if re.fullmatch(r"\d{7,8}-[0-9K]", rut):
+            proveedores[rut] = fila.get("Proveedor") or nombre_proveedor(rut)
+    procesos = ofertas["Codigo Compra Agil"].replace("", pd.NA).nunique()
+    st.caption(f"Cobertura de postulaciones: {procesos} compras con ofertas registradas. "
+               "Esta muestra tiene alcance propio y no aplica los filtros del ranking histórico.")
+    if not proveedores:
+        st.info("No hay postulaciones con proveedor identificado.")
+        return
+    rut = st.selectbox("Proveedor con postulaciones registradas", sorted(proveedores, key=proveedores.get),
+                       format_func=proveedores.get)
+    anual = resumen_postulaciones(ofertas, rut)
+    if anual.empty:
+        st.info("No hay postulaciones con fecha válida para este proveedor.")
+    else:
+        anual.index = anual.index.astype(int)
+        anual["Selección en la muestra"] = anual["Selecciones"] / anual["Postulaciones"]
+        st.dataframe(anual, column_config={
+            "Selección en la muestra": st.column_config.NumberColumn(format="percent"),
+        })
+        st.caption("Una postulación por RUT, código de compra y año de la oferta. "
+                   "La tasa anual de adjudicación confirmada requiere cobertura de las postulaciones y su resultado final.")
+    mensual = resumen_ordenes(adjudicaciones, rut)
+    st.markdown("#### Monto mensual con orden de compra")
+    if mensual.empty:
+        st.info("Sin montos verificables. Se necesita código público de la OC, fecha de emisión, monto CLP y estado de aceptación o recepción.")
+    else:
+        st.dataframe(mensual)
+    st.caption("Monto de órdenes por mes de emisión. Facturación efectiva y pagos requieren registros propios.")
+
+
 def mostrar_mercado_historico(competencia=False):
+    if competencia and st.sidebar.radio("Análisis de competencia", ["Ranking histórico", "Postulaciones y órdenes"]) == "Postulaciones y órdenes":
+        mostrar_resultados_competencia()
+        return
     vista = "Compradores y competidores" if competencia else st.sidebar.radio("Vista histórica", ["Panorama", "Compras y modalidades",
                                                     "Precios y comparables", "Archivo de la captura inicial"])
     if vista == "Archivo de la captura inicial":
