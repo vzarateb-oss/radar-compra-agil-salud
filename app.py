@@ -902,8 +902,8 @@ def mostrar_competencia(datos):
                "Orden, pago y acreditación OTEC vigente requieren verificación propia.")
 
 
-def mostrar_mercado_historico():
-    vista = st.sidebar.radio("Vista histórica", ["Panorama", "Compras y modalidades", "Compradores y competidores",
+def mostrar_mercado_historico(competencia=False):
+    vista = "Compradores y competidores" if competencia else st.sidebar.radio("Vista histórica", ["Panorama", "Compras y modalidades",
                                                     "Precios y comparables", "Archivo de la captura inicial"])
     if vista == "Archivo de la captura inicial":
         mostrar_base_inicial()
@@ -957,12 +957,7 @@ def mostrar_mercado_historico():
         columnas = ["Código", "Oportunidad", "Organismo", "Trimestre", "Área", "Submodalidad", "Evidencia modalidad"]
         with st.expander("Ver compras y evidencia"):
             st.dataframe(seleccion[columnas], hide_index=True, use_container_width=True)
-    elif vista == "Compradores y competidores":
-        izquierda, derecha = st.columns(2)
-        with izquierda:
-            barras_historicas(seleccion, "Organismo", "Compradores con más actividad")
-        with derecha:
-            st.caption("Consulta el ranking y la trayectoria por proveedor debajo.")
+    elif competencia:
         mostrar_competencia(seleccion)
     else:
         mostrar_referencias(seleccion, area, modalidad)
@@ -1132,7 +1127,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 seccion = st.radio(
     "Secciones del Radar",
-    ["Inicio", "Oportunidades", "Próximas oportunidades", "Mercado histórico", "Plan Anual de Compras", "Viabilidad comercial"],
+    ["Inicio", "Oportunidades", "Próximas oportunidades", "Mercado histórico", "Competencia", "Plan Anual de Compras", "Viabilidad comercial"],
     horizontal=True, key="radar_navegacion", label_visibility="collapsed",
 )
 if seccion == "Oportunidades":
@@ -1144,8 +1139,8 @@ if seccion in {"Oportunidades", "Próximas oportunidades"}:
     st.sidebar.header("Filtros")
     st.sidebar.selectbox("Área de capacitación", ["Todas las áreas", *FOCOS, "Otras áreas"], key="radar_foco")
     st.sidebar.selectbox("Formato", ["Todos", *MODALIDADES], key="radar_formato")
-if seccion == "Mercado histórico":
-    mostrar_mercado_historico()
+if seccion in {"Mercado histórico", "Competencia"}:
+    mostrar_mercado_historico(competencia=seccion == "Competencia")
 elif seccion == "Viabilidad comercial":
     mostrar_viabilidad()
 else:
