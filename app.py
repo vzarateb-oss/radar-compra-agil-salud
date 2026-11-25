@@ -332,17 +332,14 @@ def destacar_focos(actuales, futuras, captura_disponible):
 
 
 def abrir_foco(seccion, foco):
-    st.session_state["radar_navegacion"] = seccion
+    st.session_state["radar_navegacion"] = "Oportunidades" if seccion == "Abiertas ahora" else seccion
     st.session_state["radar_foco"] = foco
-    st.session_state[f"foco-{seccion}"] = foco
+    st.session_state["radar_vista_oportunidades"] = "Abiertas ahora"
 
 
 def filtros_area_formato(datos):
-    area, formato = st.columns([2, 1])
-    foco = area.selectbox("Área de capacitación", ["Todas las áreas", *FOCOS, "Otras áreas"],
-                          index=["Todas las áreas", *FOCOS, "Otras áreas"].index(st.session_state.get("radar_foco", "Todas las áreas")),
-                          key=f"foco-{st.session_state.get('radar_navegacion', '')}")
-    modalidad = formato.selectbox("Formato", ["Todos", *MODALIDADES])
+    foco = st.session_state.get("radar_foco", "Todas las áreas")
+    modalidad = st.session_state.get("radar_formato", "Todos")
     datos = filtrar_foco(datos, foco)
     return datos if modalidad == "Todos" else datos[datos["_formato"].eq(modalidad)]
 
@@ -486,18 +483,11 @@ def mostrar_abiertas(filas, asincronicas=False, inicio=False, futuras=None):
     c2.metric("Cierran en 24 h", int(datos["Semáforo"].eq("🔴 Hasta 24 h").sum()) if captura_disponible else "—")
     c3.metric("Por verificar", int(datos["Semáforo"].eq("⚪ Por verificar").sum()) if captura_disponible else "—")
     if inicio:
-        solo_vigentes, consulta, seleccion = True, "", "Todas"
+        consulta = ""
     else:
-        with st.container(border=True):
-            buscar, estado_filtro, modalidad = st.columns([2, 1, 1])
-            consulta = buscar.text_input("Buscar", placeholder="Código, curso u organismo").strip()
-            solo_vigentes = estado_filtro.toggle("Solo vigentes", value=True)
-            seleccion = modalidad.selectbox("Modalidad", ["Todas", *sorted(set(datos["Modalidad"]) - {""})])
-    if not inicio:
         datos = filtros_area_formato(datos)
-    if seleccion != "Todas":
-        datos = datos[datos["Modalidad"].eq(seleccion)]
-    if solo_vigentes:
+        consulta = st.session_state.get("radar_busqueda", "").strip()
+    if inicio or st.session_state.get("radar_solo_vigentes", True):
         datos = datos[datos["Semáforo"].isin(NIVELES_VIGENTES)]
     if consulta:
         columnas = [c for c in ["Código", "Oportunidad", "Organismo"] if c in datos]
@@ -565,6 +555,46 @@ def mostrar_pac(filas):
     st.info(texto_celda(filas, 2))
     st.dataframe(tabla_radar(filas), hide_index=True, use_container_width=True,
                  column_config={"Fuente": st.column_config.LinkColumn("Fuente oficial", display_text="Abrir documento")})
+
+
+def fecha_captura_historica(valor):
+    texto = str(valor or "").strip()
+    if re.fullmatch(r"\d{5}(?:\.\d+)?", texto):
+        instante = datetime(1899, 12, 30) + timedelta(seconds=round(float(texto) * 86400))
+        return instante.replace(tzinfo=ZONA_CHILE), "." in texto and not float(texto).is_integer()
+    exacta = fecha_chile(texto)
+    if exacta:
+        return exacta, True
+    for formato, tiene_hora in (("%Y-%m-%d %H:%M", True), ("%Y-%m-%d", False), ("%d/%m/%Y", False)):
+        try:
+            return datetime.strptime(texto, formato).replace(tzinfo=ZONA_CHILE), tiene_hora
+        except ValueError:
+            pass
+    return None, False
+
+
+def mostrar_captura_historica(clas):
+    datos = clas.rename(columns={"Estado": "Estado en captura"}).copy()
+    plazo_original = datos.get("Fecha cierre", pd.Series("", index=datos.index)).map(fecha_captura_historica)
+    ahora = datetime.now(ZONA_CHILE)
+    datos["Lectura del plazo"] = [
+        "Cerrada por plazo" if fecha and (fecha <= ahora if hora else fecha.date() < ahora.date())
+        else "Vigencia sin verificar"
+        for fecha, hora in plazo_original
+    ]
+    for columna in ("Fecha publicacion", "Fecha cierre"):
+        if columna in datos:
+            datos[columna] = datos[columna].map(
+                lambda v: formatear_fecha_historica(*fecha_captura_historica(v), original=v)
+            )
+    prioritarias = ["Codigo", "Nombre oportunidad", "Organismo comprador", "Lectura del plazo",
+                    "Fecha cierre", "Estado en captura", "Modalidad"]
+    orden = [c for c in prioritarias if c in datos] + [c for c in datos if c not in prioritarias]
+    return datos[orden]
+
+
+def formatear_fecha_historica(fecha, hora, original):
+    return fecha.strftime("%d/%m/%Y %H:%M" if hora else "%d/%m/%Y") if fecha else original
 
 
 def mostrar_base_inicial():
@@ -635,8 +665,10 @@ def mostrar_base_inicial():
     def formato_clp(valor):
         return '$' + f'{valor:,.0f}'.replace(',', '.')
 
-    tabs = st.tabs(['📊 Panorama', '🔎 Oportunidades', '🏛️ Compradores', '🏆 Competidores', '💻 Online asincrónico'])
-    with tabs[0]:
+    st.subheader("Mercado histórico")
+    st.caption("Archivo de la captura inicial. Para verificar compras vigentes, consulta Oportunidades.")
+    vista = st.sidebar.radio("Vista histórica", ["Panorama", "Compras registradas", "Compradores", "Competidores"])
+    if vista == "Panorama":
         a, b, c, d = st.columns(4)
         a.metric('Oportunidades sanitarias', clas['Codigo'].nunique())
         b.metric('Compradores', clas['Organismo comprador'].replace('', pd.NA).nunique())
@@ -657,18 +689,19 @@ def mostrar_base_inicial():
         st.subheader('Clasificación sanitaria')
         st.dataframe(clas['Pertinencia sanitaria'].value_counts().rename_axis('Clasificación').reset_index(name='Compras'), hide_index=True)
 
-    with tabs[1]:
-        st.subheader('Oportunidades sanitarias A, B y C')
+    elif vista == 'Compras registradas':
+        st.subheader('Compras sanitarias registradas')
         st.caption('La categoría C requiere revisión; no se presenta como capacitación clínica confirmada.')
-        st.dataframe(clas, use_container_width=True, hide_index=True)
-        st.download_button('Descargar oportunidades filtradas', clas.to_csv(index=False).encode('utf-8-sig'), 'radar_oportunidades_filtradas.csv', 'text/csv')
+        historico = mostrar_captura_historica(clas)
+        st.dataframe(historico, use_container_width=True, hide_index=True)
+        st.download_button('Descargar compras filtradas', historico.to_csv(index=False).encode('utf-8-sig'), 'radar_oportunidades_filtradas.csv', 'text/csv')
 
-    with tabs[2]:
+    elif vista == 'Compradores':
         st.subheader('Compradores por número de oportunidades')
         tabla = clas['Organismo comprador'].value_counts().rename_axis('Comprador').reset_index(name='Oportunidades')
         st.dataframe(tabla, hide_index=True, use_container_width=True)
 
-    with tabs[3]:
+    elif vista == 'Competidores':
         st.subheader('Ofertas registradas')
         if of_f.empty:
             st.info('No hay ofertas asociadas a las compras visibles con los filtros actuales.')
@@ -685,14 +718,6 @@ def mostrar_base_inicial():
         else:
             st.dataframe(adj_f, use_container_width=True, hide_index=True)
 
-    with tabs[4]:
-        st.subheader('Capacitación online asincrónica')
-        asincronicas = clas[clas['Modalidad'].str.contains('asincr', case=False, na=False)]
-        st.metric('Oportunidades con modalidad asincrónica registrada', asincronicas['Codigo'].nunique())
-        st.dataframe(asincronicas, use_container_width=True, hide_index=True)
-        st.caption('La modalidad proviene de la clasificación del Radar; verificar evidencia y adjuntos antes de cotizar.')
-
-
 
 @st.fragment(run_every="60s")
 def mostrar_radar(seccion):
@@ -702,10 +727,9 @@ def mostrar_radar(seccion):
         abiertas, futuras, pac = cargar_radar_privado()
         if seccion == "Inicio":
             mostrar_abiertas(abiertas, inicio=True, futuras=futuras)
-        elif seccion == "Abiertas ahora":
-            mostrar_abiertas(abiertas)
-        elif seccion == "Online asincrónico":
-            mostrar_abiertas(abiertas, asincronicas=True)
+        elif seccion == "Oportunidades":
+            asincronicas = st.session_state.get("radar_vista_oportunidades") == "Online asincrónico"
+            mostrar_abiertas(abiertas, asincronicas=asincronicas)
         elif seccion == "Próximas oportunidades":
             mostrar_futuras(futuras)
         else:
@@ -733,12 +757,21 @@ st.markdown("""
 </style>
 <header class="radar-hero"><p>Inteligencia comercial de capacitación sanitaria</p><h1>Radar Compra Ágil Salud</h1></header>
 """, unsafe_allow_html=True)
-seccion = st.sidebar.radio(
-    "Navegación",
-    ["Inicio", "Abiertas ahora", "Online asincrónico", "Próximas oportunidades", "Plan Anual de Compras", "Base inicial"],
-    key="radar_navegacion",
+seccion = st.radio(
+    "Secciones del Radar",
+    ["Inicio", "Oportunidades", "Próximas oportunidades", "Mercado histórico", "Plan Anual de Compras"],
+    horizontal=True, key="radar_navegacion", label_visibility="collapsed",
 )
-if seccion == "Base inicial":
+if seccion == "Oportunidades":
+    st.sidebar.header("Oportunidades")
+    st.sidebar.radio("Vista", ["Abiertas ahora", "Online asincrónico"], key="radar_vista_oportunidades")
+    st.sidebar.text_input("Buscar por código, curso u organismo", key="radar_busqueda")
+    st.sidebar.toggle("Solo vigentes", value=True, key="radar_solo_vigentes")
+if seccion in {"Oportunidades", "Próximas oportunidades"}:
+    st.sidebar.header("Filtros")
+    st.sidebar.selectbox("Área de capacitación", ["Todas las áreas", *FOCOS, "Otras áreas"], key="radar_foco")
+    st.sidebar.selectbox("Formato", ["Todos", *MODALIDADES], key="radar_formato")
+if seccion == "Mercado histórico":
     mostrar_base_inicial()
 else:
     mostrar_radar(seccion)
