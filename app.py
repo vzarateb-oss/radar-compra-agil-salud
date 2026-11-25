@@ -707,15 +707,14 @@ def abrir_viabilidad():
 
 
 def mostrar_decision_inicio():
-    st.subheader("¿Qué negocio puede sostener tu meta?")
+    st.subheader("¿Puede la capacitación en salud sostener tu meta?")
     st.caption("Meta de referencia: $10 millones netos al mes")
     _, contratos, postulaciones = calcular_meta(
         META_MENSUAL_RADAR, TICKET_ESCENARIO_RADAR, MARGEN_ESCENARIO_RADAR, CONVERSION_ESCENARIO_RADAR
     )
     st.write(f"Con $2,5 millones por contrato, 25% de margen neto y 20% de adjudicación, "
              f"la meta exige {contratos} contratos ejecutados y unas {postulaciones} postulaciones elegibles al mes.")
-    capacitacion, insumos, farmacos = st.columns(3)
-    with capacitacion.container(border=True):
+    with st.container(border=True):
         st.markdown("#### Capacitación en salud")
         try:
             datos = muestra_viabilidad(cargar_mercado_historico(), "Ambos focos")
@@ -730,14 +729,6 @@ def mostrar_decision_inicio():
                 st.write("El volumen observado queda por debajo de lo que exige el escenario.")
             else:
                 st.write("El volumen permite estudiar el escenario. Falta verificar elegibilidad y capacidad.")
-    with insumos.container(border=True):
-        st.markdown("#### Insumos sanitarios")
-        st.write("Mercado accesible por medir.")
-        st.caption("Compra repetida por producto, precio por unidad, margen después de despacho y capital de trabajo.")
-    with farmacos.container(border=True):
-        st.markdown("#### Fármacos")
-        st.write("Mercado accesible por medir.")
-        st.caption("Volumen por producto y requisitos sanitarios aplicables al modelo de distribución.")
     if st.button("Abrir simulador y comparar modalidades", type="primary", on_click=abrir_viabilidad):
         st.rerun()
     st.divider()
@@ -746,21 +737,17 @@ def mostrar_decision_inicio():
 def mostrar_viabilidad():
     st.subheader("Viabilidad comercial")
     st.caption("Compara cuántas ventas y postulaciones exige tu meta con la actividad observada.")
-    rubro = st.radio("Negocio", ["Capacitación en salud", "Insumos sanitarios", "Fármacos"], horizontal=True)
-    if rubro != "Capacitación en salud":
-        st.info("Escenario editable. El Radar actual es una base de capacitación y aún no mide compradores, "
-                "volumen contratado ni competencia de este rubro.")
     c1, c2 = st.columns(2)
     meta = c1.number_input("Meta de ganancia neta mensual · CLP", min_value=100_000,
                            value=META_MENSUAL_RADAR, step=100_000)
     monto = c2.number_input("Ingreso medio por contrato ejecutado · CLP sin IVA", min_value=50_000,
-                            value=TICKET_ESCENARIO_RADAR, step=50_000, key=f"monto-{rubro}")
+                            value=TICKET_ESCENARIO_RADAR, step=50_000, key="viabilidad_monto")
     c3, c4 = st.columns(2)
     margen = c3.number_input("Margen neto supuesto · %", min_value=1.0, max_value=100.0,
-                             value=MARGEN_ESCENARIO_RADAR, step=1.0, key=f"margen-{rubro}",
+                             value=MARGEN_ESCENARIO_RADAR, step=1.0, key="viabilidad_margen",
                              help="Ingresa el margen después de costos directos, gastos fijos e impuestos.")
     conversion = c4.number_input("Adjudicaciones por cada 100 ofertas propias", min_value=1.0, max_value=100.0,
-                                 value=CONVERSION_ESCENARIO_RADAR, step=1.0, key=f"conversion-{rubro}")
+                                 value=CONVERSION_ESCENARIO_RADAR, step=1.0, key="viabilidad_conversion")
     facturacion, contratos, postulaciones = calcular_meta(meta, monto, margen, conversion)
     a, b, c = st.columns(3)
     a.metric("Facturación mensual necesaria", clp_viabilidad(facturacion))
@@ -768,13 +755,6 @@ def mostrar_viabilidad():
     c.metric("Postulaciones elegibles al mes", postulaciones)
     st.caption("Supuestos de simulación. Las postulaciones requeridas son un promedio esperado "
                "según la tasa ingresada. El cálculo no estima flujo de caja.")
-    if rubro != "Capacitación en salud":
-        with st.expander("Qué falta medir para comparar este rubro"):
-            st.write("Compras y órdenes trazables por categoría de producto, precios por unidad comparable, "
-                     "margen después de logística, capital de trabajo y requisitos exigidos en cada ficha.")
-            st.link_button("Datos Abiertos de ChileCompra", "https://datos-abiertos.chilecompra.cl/descargas")
-        return
-
     st.markdown("### Demanda observada en capacitación")
     st.caption("Octubre de 2025 a septiembre de 2026 · cuatro trimestres completos de la Beta 9.3.")
     izquierda, derecha = st.columns(2)
