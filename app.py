@@ -30,8 +30,7 @@ ZONA_CHILE = ZoneInfo("America/Santiago")
 RANGOS_RADAR = ["RADAR_EN_VIVO!A1:N", "RADAR_PROXIMAS!A1:M", "RADAR_PAC!A1:K"]
 
 
-@st.cache_data(ttl=60)
-def cargar_radar_privado():
+def leer_rangos_radar(rangos_solicitados, formato="FORMATTED_VALUE"):
     config = st.secrets["google_sheets"]
     cuenta = Credentials.from_service_account_info(
         dict(config["service_account"]),
@@ -43,14 +42,30 @@ def cargar_radar_privado():
     with AuthorizedSession(cuenta) as session:
         response = session.get(
             f"https://sheets.googleapis.com/v4/spreadsheets/{hoja}/values:batchGet",
-            params={"ranges": RANGOS_RADAR, "valueRenderOption": "FORMATTED_VALUE"},
+            params={"ranges": rangos_solicitados, "valueRenderOption": formato},
             timeout=15,
         )
         response.raise_for_status()
         rangos = response.json()["valueRanges"]
-    if len(rangos) != len(RANGOS_RADAR):
+    if len(rangos) != len(rangos_solicitados):
         raise ValueError("La respuesta no incluye todas las vistas del Radar")
     return [rango.get("values", []) for rango in rangos]
+
+
+@st.cache_data(ttl=60)
+def cargar_radar_privado():
+    return leer_rangos_radar(RANGOS_RADAR)
+
+
+@st.cache_data(ttl=900)
+def cargar_mercado_historico():
+    filas, = leer_rangos_radar(["RADAR_HISTORICO_BETA!A1:R"], "UNFORMATTED_VALUE")
+    datos = tabla_radar(filas)
+    requeridas = {"Código", "Oportunidad", "Organismo", "Tipo comprador", "Área", "Trimestre",
+                  "Nichos", "Submodalidad", "Referencia CLP", "RUT seleccionado observado"}
+    if not requeridas.issubset(datos.columns):
+        raise ValueError("Histórico sin columnas requeridas")
+    return datos[datos["Código"].ne("")].drop_duplicates("Código")
 
 
 def tabla_radar(filas):
@@ -545,6 +560,11 @@ def mostrar_futuras(filas):
     with st.container(border=True):
         st.markdown("#### Lectura de las señales seleccionadas")
         resumen_futuro(datos, mostrar_temas=True)
+    with st.expander("Cómo se validaron las señales históricas"):
+        st.write("En el ejercicio con corte a diciembre de 2025, se observó una compra del mismo tema "
+                 "en 21 de 45 señales de intervalo de recurrencia y en 9 de 107 casos completos "
+                 "de temas aún no observados, durante los diez meses siguientes. Son tasas de esa prueba, "
+                 "no probabilidades individuales ni fechas de publicación.")
     with st.expander("Ver señales y evidencia", expanded=False):
         st.dataframe(datos.drop(columns=["_focos", "_formato"]), hide_index=True, use_container_width=True)
 
@@ -595,6 +615,134 @@ def mostrar_captura_historica(clas):
 
 def formatear_fecha_historica(fecha, hora, original):
     return fecha.strftime("%d/%m/%Y %H:%M" if hora else "%d/%m/%Y") if fecha else original
+
+
+def filtrar_historico(datos, foco, trimestre, tipo, area, nicho, modalidad, busqueda):
+    seleccion = filtrar_foco(datos, foco)
+    for columna, valor in (("Trimestre", trimestre), ("Tipo comprador", tipo), ("Submodalidad", modalidad)):
+        if valor:
+            seleccion = seleccion[seleccion[columna].eq(valor)]
+    for columna, valor in (("Área", area), ("Nichos", nicho)):
+        if valor:
+            seleccion = seleccion[seleccion[columna].map(
+                lambda v: valor in {parte.strip() for parte in str(v).split("|")}
+            )]
+    if busqueda:
+        buscar = normalizar_radar(busqueda.strip())
+        texto = seleccion[["Código", "Oportunidad", "Organismo"]].fillna("").agg(" ".join, axis=1)
+        seleccion = seleccion[texto.map(normalizar_radar).str.contains(buscar, regex=False)]
+    return seleccion
+
+
+def opciones_historico(datos, columna, multiples=False):
+    valores = datos[columna].astype(str)
+    if multiples:
+        valores = valores.str.split("|").explode().str.strip()
+    return ["", *sorted(set(valores) - {""})]
+
+
+def barras_historicas(datos, columna, titulo, limite=10, multiples=False):
+    serie = datos[columna]
+    if multiples:
+        serie = serie.str.split("|").explode().str.strip()
+    cuentas = serie[serie.ne("")].value_counts().head(limite)
+    st.markdown("#### " + titulo)
+    if cuentas.empty:
+        st.caption("Sin registros para este filtro.")
+    else:
+        st.bar_chart(cuentas.rename("Compras"), color="#188779")
+
+
+def mostrar_referencias(datos, area, modalidad):
+    st.markdown("#### Referencias de precio")
+    if not area or not modalidad:
+        st.info("Selecciona un área y una submodalidad en el lateral para acotar la comparación.")
+        return
+    comparables = datos.copy()
+    comparables["Referencia CLP"] = pd.to_numeric(comparables["Referencia CLP"], errors="coerce")
+    comparables = comparables[comparables["Referencia CLP"].gt(0)]
+    if comparables.empty:
+        st.info("Sin referencias de monto con esta selección.")
+        return
+    st.caption("Área y submodalidad acotan el grupo. Revisa duración, participantes y alcance antes de usarlo para cotizar.")
+    st.metric("Compras con referencia", len(comparables))
+    if len(comparables) >= 3:
+        a, b, c = st.columns(3)
+        for columna, titulo, valor in zip(
+            (a, b, c), ("Percentil 25", "Mediana", "Percentil 75"),
+            comparables["Referencia CLP"].quantile([.25, .50, .75]),
+        ):
+            columna.metric(titulo, "$" + f"{valor:,.0f}".replace(",", "."))
+    else:
+        st.caption("Muestra pequeña. Se muestran las referencias individuales.")
+    st.dataframe(comparables[["Código", "Oportunidad", "Trimestre", "Organismo", "Referencia CLP",
+                              "Referencia conservadora"]], hide_index=True, use_container_width=True)
+
+
+def mostrar_mercado_historico():
+    vista = st.sidebar.radio("Vista histórica", ["Panorama", "Compras y modalidades", "Compradores y competidores",
+                                                    "Precios y comparables", "Archivo de la captura inicial"])
+    if vista == "Archivo de la captura inicial":
+        mostrar_base_inicial()
+        return
+    try:
+        datos = cargar_mercado_historico()
+    except (KeyError, FileNotFoundError):
+        st.info("La conexión privada de Google Sheets está pendiente de configurar.")
+        return
+    except Exception:
+        st.warning("No fue posible cargar el histórico. El archivo inicial sigue disponible en el lateral.")
+        return
+    datos["_focos"] = [focos_compra({"Oportunidad": fila["Oportunidad"], "Área": fila["Área"],
+                                     "Códigos de evidencia": fila["Código"]})
+                       for fila in datos.to_dict("records")]
+    st.subheader("Mercado histórico")
+    st.caption("Beta 9.3 · enero de 2024 a octubre de 2026 · Q4 2026 parcial")
+    st.sidebar.header("Filtros históricos")
+    foco = st.sidebar.selectbox("Área prioritaria", ["Todas las áreas", *FOCOS, "Otras áreas"])
+    trimestre = st.sidebar.selectbox("Trimestre", opciones_historico(datos, "Trimestre"),
+                                     format_func=lambda v: v or "Todos")
+    tipo = st.sidebar.selectbox("Tipo de comprador", opciones_historico(datos, "Tipo comprador"),
+                               format_func=lambda v: v or "Todos")
+    area = st.sidebar.selectbox("Área temática", opciones_historico(datos, "Área", True),
+                               format_func=lambda v: v or "Todas")
+    nicho = st.sidebar.selectbox("Nicho", opciones_historico(datos, "Nichos", True),
+                                format_func=lambda v: v or "Todos")
+    modalidad = st.sidebar.selectbox("Submodalidad", opciones_historico(datos, "Submodalidad"),
+                                    format_func=lambda v: v or "Todas")
+    busqueda = st.sidebar.text_input("Buscar código, curso u organismo")
+    seleccion = filtrar_historico(datos, foco, trimestre, tipo, area, nicho, modalidad, busqueda)
+    if seleccion.empty:
+        st.info("No hay registros históricos para estos filtros.")
+        return
+    a, b, c = st.columns(3)
+    a.metric("Compras en la selección", len(seleccion))
+    b.metric("Compradores", seleccion.loc[seleccion["Organismo"].ne(""), "Organismo"].nunique())
+    c.metric("Asincronía explícita", int(seleccion["Asincronía explícita"].eq(True).sum()))
+    if vista == "Panorama":
+        st.markdown("#### Actividad por trimestre")
+        actividad = seleccion.loc[seleccion["Trimestre"].ne(""), "Trimestre"].value_counts().sort_index()
+        if not actividad.empty:
+            st.bar_chart(actividad.rename("Compras"), color="#188779")
+        izquierda, derecha = st.columns(2)
+        with izquierda:
+            barras_historicas(seleccion, "Área", "Áreas temáticas", multiples=True)
+        with derecha:
+            barras_historicas(seleccion, "Nichos", "Nichos observados", multiples=True)
+    elif vista == "Compras y modalidades":
+        barras_historicas(seleccion, "Submodalidad", "Submodalidades observadas")
+        columnas = ["Código", "Oportunidad", "Organismo", "Trimestre", "Área", "Submodalidad", "Evidencia modalidad"]
+        with st.expander("Ver compras y evidencia"):
+            st.dataframe(seleccion[columnas], hide_index=True, use_container_width=True)
+    elif vista == "Compradores y competidores":
+        izquierda, derecha = st.columns(2)
+        with izquierda:
+            barras_historicas(seleccion, "Organismo", "Compradores con más actividad")
+        with derecha:
+            barras_historicas(seleccion, "RUT seleccionado observado", "Proveedores seleccionados observados")
+            st.caption("Se cuenta la selección observada. La emisión de orden y el pago requieren su propia evidencia.")
+    else:
+        mostrar_referencias(seleccion, area, modalidad)
 
 
 def mostrar_base_inicial():
@@ -772,6 +920,6 @@ if seccion in {"Oportunidades", "Próximas oportunidades"}:
     st.sidebar.selectbox("Área de capacitación", ["Todas las áreas", *FOCOS, "Otras áreas"], key="radar_foco")
     st.sidebar.selectbox("Formato", ["Todos", *MODALIDADES], key="radar_formato")
 if seccion == "Mercado histórico":
-    mostrar_base_inicial()
+    mostrar_mercado_historico()
 else:
     mostrar_radar(seccion)
